@@ -12,6 +12,9 @@ def main():
     mips_parser = mips.Parser()
     mips_parser.parse('hehe')
 
+    op1 = mips.Opcode(2)
+    print(op1)
+
 
 def print_hi(name):
     # Use a breakpoint in the code line below to debug your script.
