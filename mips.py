@@ -7,6 +7,7 @@ Provide all tools/API for working with Lite MIPS
 
 from enum import Enum, auto
 
+# -------------------- DEFINES --------------------
 
 # offset for each portions in an instruction
 LEN_OP = 6
@@ -17,6 +18,9 @@ OFFSET_RS = OFFSET_OP + LEN_OP
 OFFSET_RT = OFFSET_RS + LEN_REG
 OFFSET_RD = OFFSET_RT + LEN_REG
 OFFSET_IMM = OFFSET_RT + LEN_REG
+
+
+# -------------------- FUNCS --------------------
 
 
 def convertHex2Bin(hex_str: str):
@@ -34,6 +38,9 @@ def convertHex2Bin(hex_str: str):
         bin_str += a_bin
 
     return bin_str
+
+
+# -------------------- CLASS --------------------
 
 
 class Opcode(Enum):
@@ -148,23 +155,60 @@ class Instruction:
         # regs
         ins.rs = int(bin_str[OFFSET_RS:OFFSET_RT], 2)
         ins.rt = int(bin_str[OFFSET_RT:OFFSET_RD], 2)
-        ins.rd = int(bin_str[OFFSET_RD:OFFSET_RD+LEN_REG], 2)
+        ins.rd = int(bin_str[OFFSET_RD:OFFSET_RD + LEN_REG], 2)
 
         # imm & handle 2-complement
         ins.imm = int(bin_str[OFFSET_IMM:], 2)
         if bin_str[OFFSET_IMM] == '1':
-            ins.imm = ins.imm - 2**LEN_IMM
+            ins.imm = ins.imm - 2 ** LEN_IMM
+
+        # record the hex string
+        ins.hex_str = hex_str
 
         return ins
 
 
-class Parser:
+class Emulator:
     """
-    This class provides methods to parse MIPS codes in hex to instructions
+    Emulate a Lite MIPS processor. Support: pipeline & data forwarding
     """
+
+    # memory image: contain 1024 lines
+    mem = []
 
     def __init__(self):
-        print('A Parser obj is created')
+        """
+        Constructor
+        """
 
-    def parse(self, s: str):
-        print('Input string = ', s)
+    def loadFromFile(self, file_path: str):
+        """
+        Load memory image in the given file path
+        :param file_path: the file to read the memory image
+        :return:
+        """
+
+        f = open(file_path, "r")
+        for a_line in f:
+            a_line = a_line.strip()
+            self.mem.append(a_line)
+
+    def getInsStr(self):
+        """
+        Return a string of all instructions in the memory files.
+        Assuming the CODE segment start at line 0 in the memory
+        and stop at a HALT instruction.
+
+        :return: a multi-line-string of instructions
+        """
+
+        # parse instruction until HALT
+        result = ''
+        for line in self.mem:
+            ins = Instruction.parse(line)
+            if ins.opcode != Opcode.UNKNOWN:
+                result += str(ins) + '\n'
+            if ins.opcode == Opcode.HALT:
+                break
+
+        return result

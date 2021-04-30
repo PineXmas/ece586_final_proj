@@ -6,17 +6,27 @@
 import mips
 
 
+def testInstruction():
+    print('32510010=', mips.Instruction.parse('32510010'))
+    print('3251FFFE=', mips.Instruction.parse('3251FFFE'))
+
+
+def testEmulator():
+
+    # load memory image
+    emu = mips.Emulator()
+    file_path = "data/sample_memory_image.txt"
+    emu.loadFromFile(file_path)
+    print('Number of meme lines =', len(emu.mem))
+
+    # display instructions
+    print(emu.getInsStr())
+
+
 def main():
     print('Hello from main')
 
-    mips_parser = mips.Parser()
-    mips_parser.parse('hehe')
-
-    op1 = mips.Opcode(2)
-    print(op1)
-
-    print('32510010=', mips.Instruction.parse('32510010'))
-    print('3251FFFE=', mips.Instruction.parse('3251FFFE'))
+    testEmulator()
 
 
 def print_hi(name):
