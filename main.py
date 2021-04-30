@@ -15,6 +15,9 @@ def main():
     op1 = mips.Opcode(2)
     print(op1)
 
+    print('32510010=', mips.Instruction.parse('32510010'))
+    print('3251FFFE=', mips.Instruction.parse('3251FFFE'))
+
 
 def print_hi(name):
     # Use a breakpoint in the code line below to debug your script.
