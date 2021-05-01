@@ -12,12 +12,11 @@ def testInstruction():
 
 
 def testEmulator():
-
     # load memory image
     emu = mips.Emulator()
     file_path = "data/sample_memory_image.txt"
     emu.loadFromFile(file_path)
-    print('Number of meme lines =', len(emu.mem))
+    print('Number of mem lines =', len(emu.mem))
 
     # display instructions
     print(emu.getInsStr())
@@ -29,13 +28,6 @@ def main():
     testEmulator()
 
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press ⌘F8 to toggle the breakpoint.
-
-
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     main()
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
