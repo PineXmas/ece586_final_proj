@@ -20,6 +20,9 @@ OFFSET_RT = OFFSET_RS + LEN_REG
 OFFSET_RD = OFFSET_RT + LEN_REG
 OFFSET_IMM = OFFSET_RT + LEN_REG
 
+# max number of register
+MAX_REGS = 32
+
 
 # -------------------- FUNCS --------------------
 
@@ -75,22 +78,12 @@ class Instruction:
     Represent an instruction in Lite MIPS architecture
     """
 
-    # ----------
-    # Elements of an instruction
-    # ----------
-
-    opcode = Opcode.UNKNOWN
-    rs = 0
-    rt = 0
-    rd = 0
-    imm = 0
-
-    # Original string of hex values
-    hex_str = ''
-
-    # ----------
-    # Methods
-    # ----------
+    # set of instruction types
+    list_R_types = [Opcode.AND, Opcode.OR, Opcode.XOR, Opcode.ADD, Opcode.SUB, Opcode.MUL]
+    list_arithmetic_types = [Opcode.ADD, Opcode.ADDI, Opcode.SUB, Opcode.SUBI, Opcode.MUL, Opcode.MULI]
+    list_logic_types = [Opcode.AND, Opcode.ANDI, Opcode.OR, Opcode.ORI, Opcode.XOR, Opcode.XORI]
+    list_control_types = [Opcode.BZ, Opcode.BEQ, Opcode.JR]
+    list_mem_types = [Opcode.LDW, Opcode.STW]
 
     def __init__(self):
         """
@@ -99,10 +92,86 @@ class Instruction:
         Should use the parse function of this class.
         """
 
+        # opcode & operands
+        self.opcode = Opcode.UNKNOWN
+        self.rs = 0
+        self.rt = 0
+        self.rd = 0
+        self.imm = 0
+
+        # Original string of hex values
+        self.hex_str = ''
+
     def __str__(self):
         """
         String representation of this instruction
         :return: a description of this instruction
+        """
+
+        return self.toString()
+
+    def isRType(self):
+        """
+        Check if this instruction is of R-type
+        :return: True if R-type, False otherwise
+        """
+
+        return self.opcode in self.list_R_types
+
+    def isArithmetic(self):
+        """
+        Check if this instruction is Arithmetic
+        :return:
+        """
+
+        return self.opcode in self.list_arithmetic_types
+
+    def isLogical(self):
+        """
+        Check if this instruction is Logical
+        :return:
+        """
+
+        return self.opcode in self.list_logic_types
+
+    def isMemoryAccess(self):
+        """
+        Check if this instruction is Memory Access
+        :return:
+        """
+
+        return self.opcode in self.list_mem_types
+
+    def isControlTransfer(self):
+        """
+        Check if this instruction is Control Transfer
+        :return:
+        """
+
+        return self.opcode in self.list_control_types
+
+    def getType(self) -> str:
+        """
+        Return type of this instruction as string
+        :return:
+        """
+
+        if self.isArithmetic():
+            return 'Ari'
+        if self.isLogical():
+            return 'Log'
+        if self.isMemoryAccess():
+            return 'Mem'
+        if self.isControlTransfer():
+            return 'Con'
+
+        return ''
+
+    def toString(self, add_type=False):
+        """
+        Return a string representation of this instruction
+        :param add_type: flag to add type info to the string
+        :return:
         """
 
         # opcode
@@ -123,15 +192,11 @@ class Instruction:
         else:
             result += f'R{self.rt}, R{self.rs}, {self.imm}'
 
+        # add type
+        if add_type:
+            result += f' ({self.getType()})'
+
         return result
-
-    def isRType(self):
-        """
-        Check if this instruction is of R-type
-        :return: True if R-type, False otherwise
-        """
-
-        return self.opcode in [Opcode.AND, Opcode.OR, Opcode.XOR, Opcode.ADD, Opcode.SUB, Opcode.MUL]
 
     @staticmethod
     def parse(hex_str: str):
@@ -173,22 +238,59 @@ class Instruction:
         return ins
 
 
-class Emulator:
+class EmuData:
     """
-    Emulate a Lite MIPS processor. Support: pipeline & data forwarding
+    Store data necessary for emulation: registers and memory
     """
-
-    # memory image: contain 1024 lines
-    mem = []
 
     def __init__(self):
         """
         Constructor
         """
 
+        # memory image: contain 1024 lines
+        self.mem = []
+
+        # registers
+        self.regs = []
+
+        # program counter
+        self.pc = 0
+
+        # reset all
+        self.reset()
+
+    def clone(self) -> 'EmuData':
+        """
+        Constructor: copied contents from another instance
+        """
+
+        cloned = EmuData()
+        cloned.mem = self.mem.copy()
+        cloned.regs = self.regs.copy()
+        cloned.pc = self.pc
+        return cloned
+
+    def reset(self):
+        """
+        Reset all registers to zero and clear the memory
+        :return:
+        """
+
+        # set all registers to 0
+        self.regs.clear()
+        for i in range(MAX_REGS):
+            self.regs.append(0)
+
+        # clear memory
+        self.mem.clear()
+
+        # set PC to 0
+        self.pc = 0
+
     def loadFromFile(self, file_path: str):
         """
-        Load memory image in the given file path
+        Load memory image from the given file path
         :param file_path: the file to read the memory image
         :return:
         """
@@ -202,26 +304,70 @@ class Emulator:
         # add all lines from the file to the memory
         for a_line in f:
             a_line = a_line.strip()
-            self.mem.append(a_line)
+            if len(a_line) > 0:
+                self.mem.append(a_line)
 
         # close file
         f.close()
 
     def getInsStr(self):
         """
-        Return a string of all instructions in the memory files.
-        Assuming the CODE segment start at line 0 in the memory
-        and stop at a HALT instruction.
-
+        Return a string of all instructions in the memory.
         :return: a multi-line-string of instructions
         """
 
-        # parse instruction until HALT
+        # concatenate all instruction strings
         result = ''
-        for line in self.mem:
-            ins = Instruction.parse(line)
+        for ins in self.getIns():
             result += str(ins) + '\n'
             if ins.opcode == Opcode.HALT:
                 break
 
         return result
+
+    def getIns(self) -> []:
+        """
+        Return a list of all parse-able instructions in the memory.
+        Assuming the CODE segment start at line 0 in the memory
+        and stop at a HALT instruction.
+        :return:
+        """
+
+        # parse instruction until HALT
+        result = []
+        for line in self.mem:
+            ins = Instruction.parse(line)
+            result.append(ins)
+            if ins.opcode == Opcode.HALT:
+                break
+
+        return result
+
+
+class Emulator:
+    """
+    Emulate a Lite MIPS processor. Support: pipeline & data forwarding
+    """
+
+    # store input memory image
+    mem_in = EmuData()
+
+    def __init__(self):
+        """
+        Constructor
+        """
+
+    def loadFromFile(self, file_path: str):
+        """
+        Read memory image into this emulator
+        :param file_path: the file to read the memory image
+        """
+        self.mem_in.loadFromFile(file_path)
+
+    def getInsStr(self):
+        """
+        Return a string of all instructions in the memory files.
+        :return: a multi-line-string of instructions
+        """
+
+        return self.mem_in.getInsStr()
