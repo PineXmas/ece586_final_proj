@@ -105,6 +105,7 @@ class Instruction:
     def __str__(self):
         """
         String representation of this instruction
+
         :return: a description of this instruction
         """
 
@@ -113,6 +114,7 @@ class Instruction:
     def isRType(self):
         """
         Check if this instruction is of R-type
+
         :return: True if R-type, False otherwise
         """
 
@@ -121,6 +123,7 @@ class Instruction:
     def isArithmetic(self):
         """
         Check if this instruction is Arithmetic
+
         :return:
         """
 
@@ -129,6 +132,7 @@ class Instruction:
     def isLogical(self):
         """
         Check if this instruction is Logical
+
         :return:
         """
 
@@ -137,6 +141,7 @@ class Instruction:
     def isMemoryAccess(self):
         """
         Check if this instruction is Memory Access
+
         :return:
         """
 
@@ -145,6 +150,7 @@ class Instruction:
     def isControlTransfer(self):
         """
         Check if this instruction is Control Transfer
+
         :return:
         """
 
@@ -153,6 +159,7 @@ class Instruction:
     def getType(self) -> str:
         """
         Return type of this instruction as string
+
         :return:
         """
 
@@ -170,6 +177,7 @@ class Instruction:
     def toString(self, add_type=False):
         """
         Return a string representation of this instruction
+
         :param add_type: flag to add type info to the string
         :return:
         """
@@ -262,7 +270,7 @@ class EmuData:
 
     def clone(self) -> 'EmuData':
         """
-        Constructor: copied contents from another instance
+        Clone this instance and return
         """
 
         cloned = EmuData()
@@ -274,6 +282,7 @@ class EmuData:
     def reset(self):
         """
         Reset all registers to zero and clear the memory
+
         :return:
         """
 
@@ -291,6 +300,7 @@ class EmuData:
     def loadFromFile(self, file_path: str):
         """
         Load memory image from the given file path
+
         :param file_path: the file to read the memory image
         :return:
         """
@@ -313,6 +323,7 @@ class EmuData:
     def getInsStr(self):
         """
         Return a string of all instructions in the memory.
+
         :return: a multi-line-string of instructions
         """
 
@@ -330,6 +341,7 @@ class EmuData:
         Return a list of all parse-able instructions in the memory.
         Assuming the CODE segment start at line 0 in the memory
         and stop at a HALT instruction.
+
         :return:
         """
 
@@ -360,6 +372,7 @@ class Emulator:
     def loadFromFile(self, file_path: str):
         """
         Read memory image into this emulator
+
         :param file_path: the file to read the memory image
         """
         self.mem_in.loadFromFile(file_path)
@@ -367,6 +380,7 @@ class Emulator:
     def getInsStr(self):
         """
         Return a string of all instructions in the memory files.
+
         :return: a multi-line-string of instructions
         """
 
