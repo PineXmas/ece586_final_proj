@@ -14,7 +14,7 @@ def testInstruction():
 def testEmulator():
     # load memory image
     emu = mips.Emulator()
-    file_path = "data/sample_memory_image.txt"
+    file_path = "data/test_02.txt"
     emu.loadFromFile(file_path)
     print('Number of mem lines =', len(emu.mem))
 

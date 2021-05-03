@@ -6,6 +6,7 @@ Provide all tools/API for working with Lite MIPS
 """
 
 from enum import Enum, auto
+import os.path
 
 # -------------------- DEFINES --------------------
 
@@ -144,26 +145,30 @@ class Instruction:
         # prepare result
         ins = Instruction()
 
-        # convert to binary string
-        bin_str = convertHex2Bin(hex_str)
+        try:
+            # convert to binary string
+            bin_str = convertHex2Bin(hex_str)
 
-        # opcode
-        op = bin_str[OFFSET_OP:OFFSET_RS]
-        op = int(op, 2)
-        ins.opcode = Opcode(op)
+            # opcode
+            op = bin_str[OFFSET_OP:OFFSET_RS]
+            op = int(op, 2)
+            ins.opcode = Opcode(op)
 
-        # regs
-        ins.rs = int(bin_str[OFFSET_RS:OFFSET_RT], 2)
-        ins.rt = int(bin_str[OFFSET_RT:OFFSET_RD], 2)
-        ins.rd = int(bin_str[OFFSET_RD:OFFSET_RD + LEN_REG], 2)
+            # regs
+            ins.rs = int(bin_str[OFFSET_RS:OFFSET_RT], 2)
+            ins.rt = int(bin_str[OFFSET_RT:OFFSET_RD], 2)
+            ins.rd = int(bin_str[OFFSET_RD:OFFSET_RD + LEN_REG], 2)
 
-        # imm & handle 2-complement
-        ins.imm = int(bin_str[OFFSET_IMM:], 2)
-        if bin_str[OFFSET_IMM] == '1':
-            ins.imm = ins.imm - 2 ** LEN_IMM
+            # imm & handle 2-complement
+            ins.imm = int(bin_str[OFFSET_IMM:], 2)
+            if bin_str[OFFSET_IMM] == '1':
+                ins.imm = ins.imm - 2 ** LEN_IMM
 
-        # record the hex string
-        ins.hex_str = hex_str
+            # record the hex string
+            ins.hex_str = hex_str
+        except Exception as e:
+            # print('Error while parsing instruction: [', hex_str, '], error=', e, sep='')
+            ins.opcode = Opcode.UNKNOWN
 
         return ins
 
@@ -188,10 +193,19 @@ class Emulator:
         :return:
         """
 
+        # check & open file
+        if not os.path.isfile(file_path):
+            print('File not exist:', file_path)
+            return
         f = open(file_path, "r")
+
+        # add all lines from the file to the memory
         for a_line in f:
             a_line = a_line.strip()
             self.mem.append(a_line)
+
+        # close file
+        f.close()
 
     def getInsStr(self):
         """
@@ -206,8 +220,7 @@ class Emulator:
         result = ''
         for line in self.mem:
             ins = Instruction.parse(line)
-            if ins.opcode != Opcode.UNKNOWN:
-                result += str(ins) + '\n'
+            result += str(ins) + '\n'
             if ins.opcode == Opcode.HALT:
                 break
 
