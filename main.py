@@ -15,7 +15,6 @@ def testEmuData():
     # load memory image
     d1 = mips.EmuData()
     d1.loadFromFile('data/sample_memory_image.txt')
-    print('d1=\n', d1.getInsStr(), sep='')
 
     # print all instructions
     list_ins = d1.getIns()
@@ -33,12 +32,15 @@ def testEmulator():
     # display instructions
     print(emu.getInsStr())
 
+    # execute
+    emu.execute()
+
 
 def main():
     print('Hello from main')
 
-    # testEmulator()
-    testEmuData()
+    testEmulator()
+    # testEmuData()
 
 
 if __name__ == '__main__':

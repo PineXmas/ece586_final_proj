@@ -246,6 +246,61 @@ class Instruction:
         return ins
 
 
+class PipelineStage:
+    """
+    Represent one stage in the pipeline, capable of emulating any of the 5 stages
+    """
+
+    def __init__(self):
+        """
+        Constructor
+        """
+
+        # the instruction processed in this stage
+        self.ins = Instruction()
+
+        # flag to enable/disable this stage (stall)
+        self.is_stall = False
+
+    def executeIF(self, emu_data: 'EmuData'):
+        """
+        Emulate stage IF
+
+        :return:
+        """
+
+        # fetch instruction from memory
+        self.ins = emu_data.getInsAtPC()
+
+    def executeID(self, prev_stage: 'PipelineStage'):
+        """
+        Emulate stage ID
+
+        :return:
+        """
+
+    def executeEX(self, prev_stage: 'PipelineStage'):
+        """
+        Emulate stage EX
+
+        :return:
+        """
+
+    def executeMEM(self, prev_stage: 'PipelineStage'):
+        """
+        Emulate stage MEM
+
+        :return:
+        """
+
+    def executeWB(self, prev_stage: 'PipelineStage'):
+        """
+        Emulate stage WB
+
+        :return:
+        """
+
+
 class EmuData:
     """
     Store data necessary for emulation: registers and memory
@@ -279,9 +334,9 @@ class EmuData:
         cloned.pc = self.pc
         return cloned
 
-    def reset(self):
+    def resetRegisters(self):
         """
-        Reset all registers to zero and clear the memory
+        Reset all registers/PC to zero
 
         :return:
         """
@@ -291,11 +346,20 @@ class EmuData:
         for i in range(MAX_REGS):
             self.regs.append(0)
 
-        # clear memory
-        self.mem.clear()
-
         # set PC to 0
         self.pc = 0
+
+    def reset(self):
+        """
+        Reset and clear all data
+
+        :return:
+        """
+
+        self.resetRegisters()
+
+        # clear memory
+        self.mem.clear()
 
     def loadFromFile(self, file_path: str):
         """
@@ -355,19 +419,42 @@ class EmuData:
 
         return result
 
+    def getInsAtPC(self) -> Instruction:
+        """
+        Return the Instruction at the PC
+
+        :return:
+        """
+
+        ins_str = self.mem[self.pc]
+        return Instruction.parse(ins_str)
+
 
 class Emulator:
     """
     Emulate a Lite MIPS processor. Support: pipeline & data forwarding
     """
 
-    # store input memory image
-    mem_in = EmuData()
-
     def __init__(self):
         """
         Constructor
         """
+
+        # store input memory image
+        self.mem_in = EmuData()
+
+        # store output memory image, after emulation
+        self.mem_out = EmuData()
+
+        # flag for data forwarding
+        self.forwarding_enabled = False
+
+        # pipeline intermediate data
+        self.stage_IF = PipelineStage()
+        self.stage_ID = PipelineStage()
+        self.stage_EX = PipelineStage()
+        self.stage_MEM = PipelineStage()
+        self.stage_WB = PipelineStage()
 
     def loadFromFile(self, file_path: str):
         """
@@ -385,3 +472,39 @@ class Emulator:
         """
 
         return self.mem_in.getInsStr()
+
+    def setForwardingEnabled(self, forwarding_enable: bool):
+        """
+        Set whether data-forwarding will be enabled when dealing with hazard
+
+        :param forwarding_enable:
+        :return:
+        """
+
+        self.forwarding_enabled = forwarding_enable
+
+    def execute(self):
+        """
+        Run the emulator by performing operations corresponding to the instructions in the loaded memory
+
+        :return:
+        """
+
+        # prepare output memory
+        self.mem_out = self.mem_in.clone()
+        self.mem_out.resetRegisters()
+
+        # run emulation until 'HALT'
+        while True:
+
+            # Stage 5: WB
+
+            # Stage 4: MEM
+
+            # Stage 3: EX
+
+            # Stage 2: ID
+
+            # Stage 1: IF
+            self.stage_IF.executeIF(self.mem_out)
+            print('IF --> ', self.stage_IF.ins.toString(), sep='')
