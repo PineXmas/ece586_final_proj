@@ -24,6 +24,12 @@ OFFSET_IMM = OFFSET_RT + LEN_REG
 # max number of register
 MAX_REGS = 32
 
+# mask for 32-bit integer
+INT_MASK_32 = 0xFFFFFFFF
+
+# max length for a hex string in the memory image
+MAX_HEX_LENGTH = 8
+
 
 # -------------------- FUNCS --------------------
 
@@ -44,6 +50,34 @@ def convertHex2Bin(hex_str: str):
 
     return bin_str
 
+
+def convertBin2SignedInt(bin_str: str, bit_length) -> int:
+    """
+    Convert a given binary-string into its corresponding signed integer (2-complement)
+
+    :param bin_str: the binary string
+    :param bit_length: max number of bit used for the number
+    :return:
+    """
+    num = int(bin_str, 2)
+
+    # handle 2-complement
+    if bin_str[0] == '1':
+        num = num - 2 ** bit_length
+    return num
+
+
+def convertSignedInt2Hex(signed_int: int) -> str:
+    """
+    Convert the given signed integer into its corresponding hex string
+
+    :param signed_int: the signed integer
+    :return:
+    """
+
+    hex_str = hex(signed_int & INT_MASK_32)
+    hex_str = hex_str[2:].zfill(MAX_HEX_LENGTH)
+    return hex_str
 
 # -------------------- CLASS --------------------
 
@@ -243,10 +277,11 @@ class Instruction:
             ins.rt = int(bin_str[OFFSET_RT:OFFSET_RD], 2)
             ins.rd = int(bin_str[OFFSET_RD:OFFSET_RD + LEN_REG], 2)
 
-            # imm & handle 2-complement
-            ins.imm = int(bin_str[OFFSET_IMM:], 2)
-            if bin_str[OFFSET_IMM] == '1':
-                ins.imm = ins.imm - 2 ** LEN_IMM
+            # imm
+            ins.imm = convertBin2SignedInt(bin_str[OFFSET_IMM:], LEN_IMM)
+            # ins.imm = int(bin_str[OFFSET_IMM:], 2)
+            # if bin_str[OFFSET_IMM] == '1':
+            #     ins.imm = ins.imm - 2 ** LEN_IMM
 
             # record the hex string
             ins.hex_str = hex_str
@@ -259,7 +294,8 @@ class Instruction:
 
 class StageData:
     """
-    Store intermediate results for a stage
+    Store intermediate results for a stage.
+    Note that the data of a stage always store the final result at the end of a cycle.
     """
 
     def __init__(self):
@@ -276,6 +312,17 @@ class StageData:
 
         # flag: if HALT is processed in stage WB
         self.is_halt_done_WB = False
+
+        # intermediate computation values
+        self.alu_val = 0                # store final value used by stages EX and WB
+        self.alu_op_a = 0
+        self.alu_op_b = 0
+        self.data_to_write = 0
+        self.dst_to_write = 0           # mem addr/reg index
+
+        # destination: rd, mem or PC
+        self.is_dst_reg = False
+        self.is_dst_pc = False
 
 
 class PipelineStage:
@@ -351,7 +398,7 @@ class StageID(PipelineStage):
     Stage 02: Instruction Decode
     """
 
-    def execute(self, prev_stage: 'PipelineStage'):
+    def execute(self, prev_stage: 'PipelineStage', emu_data: 'EmuData'):
         """
         Execute this stage to emulate one step/cycle in the pipeline
 
@@ -362,8 +409,11 @@ class StageID(PipelineStage):
         if self.checkStallAndSetNOOP():
             return
 
-        # take instruction from the previous stage
-        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+        # take data from previous stage
+        self.data = copy.deepcopy(prev_stage.data)
+
+        # decode
+        # TODO: continue here
 
 
 class StageEX(PipelineStage):
@@ -382,8 +432,8 @@ class StageEX(PipelineStage):
         if self.checkStallAndSetNOOP():
             return
 
-        # take instruction from the previous stage
-        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+        # take data from previous stage
+        self.data = copy.deepcopy(prev_stage.data)
 
 
 class StageMEM(PipelineStage):
@@ -402,8 +452,8 @@ class StageMEM(PipelineStage):
         if self.checkStallAndSetNOOP():
             return
 
-        # take instruction from the previous stage
-        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+        # take data from previous stage
+        self.data = copy.deepcopy(prev_stage.data)
 
 
 class StageWB(PipelineStage):
@@ -422,8 +472,8 @@ class StageWB(PipelineStage):
         if self.checkStallAndSetNOOP():
             return
 
-        # take instruction from the previous stage
-        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+        # take data from previous stage
+        self.data = copy.deepcopy(prev_stage.data)
 
         # determine if HALT is processed
         self.data.is_halt_done_WB = self.data.ins.opcode == Opcode.HALT
@@ -561,6 +611,64 @@ class EmuData:
         ins_str = self.mem[self.pc]
         return Instruction.parse(ins_str)
 
+    def getRegister(self, reg_id):
+        """
+        Return register value at the desired index
+        :return:
+        """
+
+        # check
+        if reg_id < 0 or reg_id >= MAX_REGS:
+            return 0
+
+        return self.regs[reg_id]
+
+    def setRegister(self, reg_id, reg_val):
+        """
+        Set value to the desired register
+        :return:
+        """
+
+        # check
+        if reg_id < 0 or reg_id >= MAX_REGS:
+            return
+
+        self.regs[reg_id] = reg_val
+
+    def getMem(self, mem_addr):
+        """
+        Get memory content at the desired address
+        :param mem_addr:
+        :return:
+        """
+
+        # check
+        if mem_addr < 0 or mem_addr >= len(self.mem):
+            raise Exception('Memory out-of-bound: ' + str(mem_addr))
+
+        # convert to signed integer
+        bin_str = convertHex2Bin(self.mem[mem_addr])
+        signed_int = convertBin2SignedInt(bin_str, LEN_IMM)
+
+        return signed_int
+
+    def setMem(self, mem_addr, signed_int: int):
+        """
+        Set the given memory content to the desired address
+
+        :param signed_int: the content to overwrite
+        :param mem_addr: the desired memory address
+        :return:
+        """
+
+        # check
+        if mem_addr < 0 or mem_addr >= len(self.mem):
+            raise Exception('Memory out-of-bound: ' + str(mem_addr))
+
+        # convert to hex string & store
+        hex_str = convertSignedInt2Hex(signed_int)
+        self.mem[mem_addr] = hex_str
+
 
 class Emulator:
     """
@@ -647,7 +755,7 @@ class Emulator:
         print('EX  --> ', self.stage_EX.data.ins.toString(), sep='')
 
         # Stage 2: ID
-        self.stage_ID.execute(self.stage_IF)
+        self.stage_ID.execute(self.stage_IF, self.mem_out)
         print('ID  --> ', self.stage_ID.data.ins.toString(), sep='')
 
         # Stage 1: IF
