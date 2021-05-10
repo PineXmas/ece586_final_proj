@@ -34,6 +34,7 @@ def testEmulator():
 
     # execute
     emu.execute()
+    print(emu.getReportString())
 
 
 def main():

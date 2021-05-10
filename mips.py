@@ -7,6 +7,7 @@ Provide all tools/API for working with Lite MIPS
 
 from enum import Enum, auto
 import os.path
+import copy
 
 # -------------------- DEFINES --------------------
 
@@ -70,6 +71,7 @@ class Opcode(Enum):
     BEQ = 15
     JR = 16
     HALT = 17
+    NOOP = 0b111110
     UNKNOWN = 0b111111
 
 
@@ -110,6 +112,15 @@ class Instruction:
         """
 
         return self.toString()
+
+    # def clone(self) -> 'Instruction':
+    #     """
+    #     Clone this object & return (deep copy)
+    #     :return:
+    #     """
+    #
+    #     cloned = Instruction()
+    #     cloned.opcode = self.
 
     def isRType(self):
         """
@@ -185,8 +196,8 @@ class Instruction:
         # opcode
         result = str(self.opcode.name)
 
-        # unknown, halt
-        if self.opcode in [Opcode.UNKNOWN, Opcode.HALT]:
+        # unknown, halt, noop
+        if self.opcode in [Opcode.UNKNOWN, Opcode.HALT, Opcode.NOOP]:
             return result
 
         # add values based on the opcode
@@ -246,9 +257,9 @@ class Instruction:
         return ins
 
 
-class PipelineStage:
+class StageData:
     """
-    Represent one stage in the pipeline, capable of emulating any of the 5 stages
+    Store intermediate results for a stage
     """
 
     def __init__(self):
@@ -258,47 +269,164 @@ class PipelineStage:
 
         # the instruction processed in this stage
         self.ins = Instruction()
+        self.ins.opcode = Opcode.NOOP
+
+        # flag: if HALT is fetched
+        self.is_halt_done_IF = False
+
+        # flag: if HALT is processed in stage WB
+        self.is_halt_done_WB = False
+
+
+class PipelineStage:
+    """
+    Represent a stage in the pipeline, should not be used to create any specific stage,
+    but use the other classes instead.
+    """
+
+    def __init__(self):
+        """
+        Constructor
+        """
 
         # flag to enable/disable this stage (stall)
         self.is_stall = False
 
-    def executeIF(self, emu_data: 'EmuData'):
+        # intermediate results
+        self.data = StageData()
+
+    def checkStallAndSetNOOP(self):
         """
-        Emulate stage IF
+        Check if the stage is stalled and set instruction to NOOP for doing nothing
+        :return: True if stalled, False otherwise
+        """
+
+        if self.is_stall:
+            self.ins = Instruction()
+            self.ins.opcode = Opcode.NOOP
+            return True
+
+        return False
+
+    def setStall(self, is_stall: bool):
+        """
+        Enable/Disable this stage
+        :param is_stall:
+        :return:
+        """
+
+        self.is_stall = is_stall
+
+
+class StageIF(PipelineStage):
+    """
+    Stage 01: Instruction Fetch
+    """
+
+    def execute(self, emu_data: 'EmuData'):
+        """
+        Execute this stage to emulate one step/cycle in the pipeline
 
         :return:
         """
+
+        # check stall
+        if self.checkStallAndSetNOOP():
+            return
+
+        # do nothing if HALT is encountered or stalled
+        if self.data.is_halt_done_IF:
+            self.data.ins.opcode = Opcode.NOOP
+            return
 
         # fetch instruction from memory
-        self.ins = emu_data.getInsAtPC()
+        self.data.ins = emu_data.getInsAtPC()
 
-    def executeID(self, prev_stage: 'PipelineStage'):
-        """
-        Emulate stage ID
+        # determine to stop fetching
+        self.data.is_halt_done_IF = (self.data.ins.opcode == Opcode.HALT)
 
-        :return:
-        """
 
-    def executeEX(self, prev_stage: 'PipelineStage'):
-        """
-        Emulate stage EX
+class StageID(PipelineStage):
+    """
+    Stage 02: Instruction Decode
+    """
 
-        :return:
+    def execute(self, prev_stage: 'PipelineStage'):
         """
-
-    def executeMEM(self, prev_stage: 'PipelineStage'):
-        """
-        Emulate stage MEM
+        Execute this stage to emulate one step/cycle in the pipeline
 
         :return:
         """
 
-    def executeWB(self, prev_stage: 'PipelineStage'):
+        # check stall
+        if self.checkStallAndSetNOOP():
+            return
+
+        # take instruction from the previous stage
+        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+
+
+class StageEX(PipelineStage):
+    """
+    Stage 03: Execution
+    """
+
+    def execute(self, prev_stage: 'PipelineStage'):
         """
-        Emulate stage WB
+        Execute this stage to emulate one step/cycle in the pipeline
 
         :return:
         """
+
+        # check stall
+        if self.checkStallAndSetNOOP():
+            return
+
+        # take instruction from the previous stage
+        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+
+
+class StageMEM(PipelineStage):
+    """
+    Stage 04: Memory Access
+    """
+
+    def execute(self, prev_stage: 'PipelineStage'):
+        """
+        Execute this stage to emulate one step/cycle in the pipeline
+
+        :return:
+        """
+
+        # check stall
+        if self.checkStallAndSetNOOP():
+            return
+
+        # take instruction from the previous stage
+        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+
+
+class StageWB(PipelineStage):
+    """
+    Stage 05: Write Back
+    """
+
+    def execute(self, prev_stage: 'PipelineStage'):
+        """
+        Execute this stage to emulate one step/cycle in the pipeline
+
+        :return:
+        """
+
+        # check stall
+        if self.checkStallAndSetNOOP():
+            return
+
+        # take instruction from the previous stage
+        self.data.ins = copy.deepcopy(prev_stage.data.ins)
+
+        # determine if HALT is processed
+        self.data.is_halt_done_WB = self.data.ins.opcode == Opcode.HALT
 
 
 class EmuData:
@@ -426,6 +554,10 @@ class EmuData:
         :return:
         """
 
+        # check bound
+        if self.pc >= len(self.mem) or self.pc < 0:
+            return Instruction()
+
         ins_str = self.mem[self.pc]
         return Instruction.parse(ins_str)
 
@@ -449,12 +581,18 @@ class Emulator:
         # flag for data forwarding
         self.forwarding_enabled = False
 
+        # flag to set if end of instructions (HALT is encountered and processed)
+        self.is_halted = False
+
+        # count the number of cycles spent in the emulation
+        self.count_cycles = 0
+
         # pipeline intermediate data
-        self.stage_IF = PipelineStage()
-        self.stage_ID = PipelineStage()
-        self.stage_EX = PipelineStage()
-        self.stage_MEM = PipelineStage()
-        self.stage_WB = PipelineStage()
+        self.stage_IF = StageIF()
+        self.stage_ID = StageID()
+        self.stage_EX = StageEX()
+        self.stage_MEM = StageMEM()
+        self.stage_WB = StageWB()
 
     def loadFromFile(self, file_path: str):
         """
@@ -483,6 +621,75 @@ class Emulator:
 
         self.forwarding_enabled = forwarding_enable
 
+    def execute_step(self):
+        """
+        Run the emulator for one step/cycle
+
+        :return:
+        """
+
+        # do nothing if end of code is reached
+        if self.is_halted:
+            return
+
+        # check for hazards to enable/disable stages
+
+        # Stage 5: WB
+        self.stage_WB.execute(self.stage_MEM)
+        print('WB  --> ', self.stage_WB.data.ins.toString(), sep='')
+
+        # Stage 4: MEM
+        self.stage_MEM.execute(self.stage_EX)
+        print('MEM --> ', self.stage_MEM.data.ins.toString(), sep='')
+
+        # Stage 3: EX
+        self.stage_EX.execute(self.stage_ID)
+        print('EX  --> ', self.stage_EX.data.ins.toString(), sep='')
+
+        # Stage 2: ID
+        self.stage_ID.execute(self.stage_IF)
+        print('ID  --> ', self.stage_ID.data.ins.toString(), sep='')
+
+        # Stage 1: IF
+        self.stage_IF.execute(self.mem_out)
+        print('IF  --> ', self.stage_IF.data.ins.toString(), sep='')
+
+        # determine next PC
+        self.mem_out.pc += 1
+
+        # determine if the emulation should be halted
+        self.is_halted = self.stage_WB.data.is_halt_done_WB
+
+        # count cycles
+        self.count_cycles += 1
+
+        print()
+
+    def reset(self):
+        """
+        Reset this emulator before re-run the emulation
+
+        :return:
+        """
+
+        self.is_halted = False
+        self.count_cycles = 0
+        self.stage_IF = StageIF()
+        self.stage_ID = StageID()
+        self.stage_EX = StageEX()
+        self.stage_MEM = StageMEM()
+        self.stage_WB = StageWB()
+
+    def getReportString(self):
+        """
+        Return a report string for the emulation
+        :return:
+        """
+
+        report = ''
+        report += 'Total cycles = ' + str(self.count_cycles)
+        return report
+
     def execute(self):
         """
         Run the emulator by performing operations corresponding to the instructions in the loaded memory
@@ -490,21 +697,14 @@ class Emulator:
         :return:
         """
 
+        # do nothing if end of code is reached
+        if self.is_halted:
+            return
+
         # prepare output memory
         self.mem_out = self.mem_in.clone()
         self.mem_out.resetRegisters()
 
         # run emulation until 'HALT'
-        while True:
-
-            # Stage 5: WB
-
-            # Stage 4: MEM
-
-            # Stage 3: EX
-
-            # Stage 2: ID
-
-            # Stage 1: IF
-            self.stage_IF.executeIF(self.mem_out)
-            print('IF --> ', self.stage_IF.ins.toString(), sep='')
+        while not self.is_halted:
+            self.execute_step()
