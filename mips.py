@@ -302,8 +302,8 @@ class PipelineStage:
         """
 
         if self.is_stall:
-            self.ins = Instruction()
-            self.ins.opcode = Opcode.NOOP
+            self.data.ins = Instruction()
+            self.data.ins.opcode = Opcode.NOOP
             return True
 
         return False
