@@ -56,8 +56,8 @@ def testEmulator():
 def main():
     print('Hello from main')
 
-    # testEmulator()
-    testEmuData()
+    testEmulator()
+    # testEmuData()
 
 
 if __name__ == '__main__':

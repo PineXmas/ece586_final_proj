@@ -116,12 +116,12 @@ class Opcode(Enum):
 
 class WriteDst(Enum):
     """
-    All write destinations
+    All write destinations, metadata used by the stages
     """
-    REG = auto(),
-    MEM = auto(),
-    PC = auto(),
-    NOT_SET = auto
+    REG = auto()
+    MEM = auto()
+    PC = auto()
+    NOT_SET = auto()
 
 
 class Instruction:
@@ -329,7 +329,7 @@ class StageData:
         self.is_halt_done_WB = False
 
         # intermediate computation values
-        self.alu_val = 0                # store final value used by stages EX and WB
+        self.alu_result = 0             # store computed ALU result used by stages MEM and WB
         self.alu_op_a = 0
         self.alu_op_b = 0
         self.data_to_write = 0
@@ -372,11 +372,21 @@ class PipelineStage:
     def setStall(self, is_stall: bool):
         """
         Enable/Disable this stage
+
         :param is_stall:
         :return:
         """
 
         self.is_stall = is_stall
+
+    def getStatus(self) -> str:
+        """
+        Return a string summarizing current status of the stage
+
+        :return:
+        """
+
+        return f'{self.data.ins.toString()}'
 
 
 class StageIF(PipelineStage):
@@ -426,21 +436,68 @@ class StageID(PipelineStage):
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
 
-        # decode
-        # TODO: continue here: determine dst type & alu operand a/b
+        # ignore if HALT
+        if self.data.ins.opcode == Opcode.HALT:
+            return
+
+        # ----------
+        # Decode
+        # ----------
+
+        # # debug:
+        # self.data.dst_type = WriteDst.PC
+
+        # ALU operand a: is always reg[rs]
         self.data.alu_op_a = emu_data.getRegister(self.data.ins.rs)
-        if not self.data.ins.isRType():
-            self.data.alu_op_b = emu_data.getRegister(self.data.ins.imm)
-            self.data.dst_to_write = self.data.ins.rt
-        else:
+
+        # ALU operand b: depend on R-type or I-type
+        if self.data.ins.isRType():
             self.data.alu_op_b = emu_data.getRegister(self.data.ins.rt)
             self.data.dst_to_write = self.data.ins.rd
-            self.data.is_dst_reg = True
+        else:
+            self.data.alu_op_b = self.data.ins.imm
+            self.data.dst_to_write = self.data.ins.rt
 
-        # special cases
+        # determine dst type
+        if self.data.ins.opcode == Opcode.STW:
+            """
+            STW:
+                dst-to-write: a memory address, retrieved from the ALU result computed in stage EX
+            """
 
-        # BEQ
-        # BEQ
+            self.data.dst_type = WriteDst.MEM
+        elif self.data.ins.isControlTransfer():
+            """
+            BEQ/BZ/JR:
+                dst-to-write: is the PC
+            """
+
+            self.data.dst_type = WriteDst.PC
+        else:
+            """
+            others:
+                dst-to-write: a register index
+            """
+
+            self.data.dst_type = WriteDst.REG
+
+    def getStatus(self):
+        """
+        Return a string summarizing current status of the stage
+
+        :return:
+        """
+
+        status = ''
+        status += self.data.ins.toString()
+        status += f' ('\
+                  f'alu_a={self.data.alu_op_a}, ' \
+                  f'alu_b={self.data.alu_op_b}, ' \
+                  f'dst_type={self.data.dst_type.name}, ' \
+                  f'dst_to_write={self.data.dst_to_write}' \
+                  f')'
+
+        return status
 
 
 class StageEX(PipelineStage):
@@ -462,6 +519,10 @@ class StageEX(PipelineStage):
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
 
+        # ignore if HALT
+        if self.data.ins.opcode == Opcode.HALT:
+            return
+
 
 class StageMEM(PipelineStage):
     """
@@ -481,6 +542,10 @@ class StageMEM(PipelineStage):
 
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
+
+        # ignore if HALT
+        if self.data.ins.opcode == Opcode.HALT:
+            return
 
 
 class StageWB(PipelineStage):
@@ -504,6 +569,10 @@ class StageWB(PipelineStage):
 
         # determine if HALT is processed
         self.data.is_halt_done_WB = self.data.ins.opcode == Opcode.HALT
+
+        # ignore if HALT
+        if self.data.ins.opcode == Opcode.HALT:
+            return
 
 
 class EmuData:
@@ -797,7 +866,7 @@ class Emulator:
 
         # Stage 2: ID
         self.stage_ID.execute(self.stage_IF, self.mem_out)
-        print('ID  --> ', self.stage_ID.data.ins.toString(), sep='')
+        print('ID  --> ', self.stage_ID.getStatus(), sep='')
 
         # Stage 1: IF
         self.stage_IF.execute(self.mem_out)
