@@ -30,6 +30,8 @@ INT_MASK_32 = 0xFFFFFFFF
 # max length for a hex string in the memory image
 MAX_HEX_LENGTH = 8
 
+# max length in bit of an instruction
+LEN_INS = MAX_HEX_LENGTH * 4
 
 # -------------------- FUNCS --------------------
 
@@ -59,6 +61,9 @@ def convertBin2SignedInt(bin_str: str, bit_length) -> int:
     :param bit_length: max number of bit used for the number
     :return:
     """
+
+    # trim the string to bit-length digits (counting from the right) & convert to number
+    bin_str = bin_str[-bit_length:]
     num = int(bin_str, 2)
 
     # handle 2-complement
@@ -107,6 +112,16 @@ class Opcode(Enum):
     HALT = 17
     NOOP = 0b111110
     UNKNOWN = 0b111111
+
+
+class WriteDst(Enum):
+    """
+    All write destinations
+    """
+    REG = auto(),
+    MEM = auto(),
+    PC = auto(),
+    NOT_SET = auto
 
 
 class Instruction:
@@ -321,8 +336,7 @@ class StageData:
         self.dst_to_write = 0           # mem addr/reg index
 
         # destination: rd, mem or PC
-        self.is_dst_reg = False
-        self.is_dst_pc = False
+        self.dst_type = WriteDst.NOT_SET
 
 
 class PipelineStage:
@@ -413,7 +427,20 @@ class StageID(PipelineStage):
         self.data = copy.deepcopy(prev_stage.data)
 
         # decode
-        # TODO: continue here
+        # TODO: continue here: determine dst type & alu operand a/b
+        self.data.alu_op_a = emu_data.getRegister(self.data.ins.rs)
+        if not self.data.ins.isRType():
+            self.data.alu_op_b = emu_data.getRegister(self.data.ins.imm)
+            self.data.dst_to_write = self.data.ins.rt
+        else:
+            self.data.alu_op_b = emu_data.getRegister(self.data.ins.rt)
+            self.data.dst_to_write = self.data.ins.rd
+            self.data.is_dst_reg = True
+
+        # special cases
+
+        # BEQ
+        # BEQ
 
 
 class StageEX(PipelineStage):
@@ -635,26 +662,26 @@ class EmuData:
 
         self.regs[reg_id] = reg_val
 
-    def getMem(self, mem_addr):
+    def getMemInt(self, mem_addr) -> int:
         """
-        Get memory content at the desired address
+        Get memory content at the desired address as a signed integer
+
         :param mem_addr:
         :return:
         """
 
-        # check
-        if mem_addr < 0 or mem_addr >= len(self.mem):
-            raise Exception('Memory out-of-bound: ' + str(mem_addr))
+        # get memory string
+        mem_str = self.getMemStr(mem_addr)
 
         # convert to signed integer
-        bin_str = convertHex2Bin(self.mem[mem_addr])
-        signed_int = convertBin2SignedInt(bin_str, LEN_IMM)
+        bin_str = convertHex2Bin(mem_str)
+        signed_int = convertBin2SignedInt(bin_str, LEN_INS)
 
         return signed_int
 
-    def setMem(self, mem_addr, signed_int: int):
+    def setMemInt(self, mem_addr, signed_int: int):
         """
-        Set the given memory content to the desired address
+        Set the given signed integer to the desired address
 
         :param signed_int: the content to overwrite
         :param mem_addr: the desired memory address
@@ -668,6 +695,20 @@ class EmuData:
         # convert to hex string & store
         hex_str = convertSignedInt2Hex(signed_int)
         self.mem[mem_addr] = hex_str
+
+    def getMemStr(self, mem_addr) -> str:
+        """
+        Get memory content at the desired address as a string
+
+        :param mem_addr:
+        :return:
+        """
+
+        # check
+        if mem_addr < 0 or mem_addr >= len(self.mem):
+            raise Exception('Memory out-of-bound: ' + str(mem_addr))
+
+        return self.mem[mem_addr]
 
 
 class Emulator:

@@ -13,19 +13,34 @@ def testInstruction():
 
 def testEmuData():
     # load memory image
+    file_path = 'data/test_02.txt'
     d1 = mips.EmuData()
-    d1.loadFromFile('data/sample_memory_image.txt')
+    d1.loadFromFile(file_path)
+    print('EmuData memory loaded')
 
     # print all instructions
     list_ins = d1.getIns()
+    print('Instructions:')
     for ins in list_ins:
         print(ins.toString(add_type=True))
+
+    # set/get mem
+    print('Test set/get memory:')
+    mem_val = -32767
+    mem_addr = 0
+    mem_val_read = d1.getMemInt(mem_addr)
+    mem_str_read = d1.getMemStr(mem_addr)
+    print('[Before] Get memory at address', mem_addr, ':', mem_val_read, '(str=', mem_str_read, ')')
+    d1.setMemInt(mem_addr, -32767)
+    print('Set', mem_val, 'address', mem_addr)
+    mem_val_read = d1.getMemInt(mem_addr)
+    print('[After ] Get memory at address', mem_addr, ':', mem_val_read)
 
 
 def testEmulator():
     # load memory image
     emu = mips.Emulator()
-    file_path = "data/sample_memory_image.txt"
+    # file_path = "data/sample_memory_image.txt"
     file_path = "data/test_02.txt"
     emu.loadFromFile(file_path)
     print('Number of mem lines =', len(emu.mem_in.mem))
@@ -41,8 +56,8 @@ def testEmulator():
 def main():
     print('Hello from main')
 
-    testEmulator()
-    # testEmuData()
+    # testEmulator()
+    testEmuData()
 
 
 if __name__ == '__main__':
