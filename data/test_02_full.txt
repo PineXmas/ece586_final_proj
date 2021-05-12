@@ -1,3 +1,6 @@
+# This test is based on the "signed-arithmetic-updated" doc
+# Used to test the signed value
+
 06510010
 ADDI R17, R18, 16
 

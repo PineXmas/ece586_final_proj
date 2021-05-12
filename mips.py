@@ -136,6 +136,9 @@ class Instruction:
     list_control_types = [Opcode.BZ, Opcode.BEQ, Opcode.JR]
     list_mem_types = [Opcode.LDW, Opcode.STW]
 
+    # register symbol
+    R_str = '$'
+
     def __init__(self):
         """
         Constructor.
@@ -252,13 +255,13 @@ class Instruction:
         # add values based on the opcode
         result += ' '
         if self.isRType():
-            result += f'R{self.rd}, R{self.rs}, R{self.rt}'
+            result += f'{self.R_str}{self.rd}, {self.R_str}{self.rs}, {self.R_str}{self.rt}'
         elif self.opcode == Opcode.BZ:
-            result += f'R{self.rs}, {self.imm}'
+            result += f'{self.R_str}{self.rs}, {self.imm}'
         elif self.opcode == Opcode.JR:
-            result += f'R{self.rs}'
+            result += f'{self.R_str}{self.rs}'
         else:
-            result += f'R{self.rt}, R{self.rs}, {self.imm}'
+            result += f'{self.R_str}{self.rt}, {self.R_str}{self.rs}, {self.imm}'
 
         # add type
         if add_type:
@@ -338,6 +341,21 @@ class StageData:
         # destination: rd, mem or PC
         self.dst_type = WriteDst.NOT_SET
 
+        # flag: in case we should take the branch
+        self.is_branch = False
+
+        # branch address in case we should take the branch
+        self.branch_addr = 0
+
+        # memory address used for LDW/STW
+        self.mem_addr = 0
+
+        # value to store to memory, used by STW only
+        # TODO: continue with store_val
+        self.store_val = 0
+
+        # record indices of input registers also to check for hazards
+
 
 class PipelineStage:
     """
@@ -388,6 +406,13 @@ class PipelineStage:
 
         return f'{self.data.ins.toString()}'
 
+    def isDoingNothing(self):
+        """
+        :return: True if NOOP or HALT
+        """
+
+        return self.data.ins.opcode == Opcode.HALT or self.data.ins.opcode == Opcode.NOOP
+
 
 class StageIF(PipelineStage):
     """
@@ -436,16 +461,13 @@ class StageID(PipelineStage):
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
 
-        # ignore if HALT
-        if self.data.ins.opcode == Opcode.HALT:
+        # ignore if HALT/NOOP
+        if self.isDoingNothing():
             return
 
         # ----------
         # Decode
         # ----------
-
-        # # debug:
-        # self.data.dst_type = WriteDst.PC
 
         # ALU operand a: is always reg[rs]
         self.data.alu_op_a = emu_data.getRegister(self.data.ins.rs)
@@ -455,7 +477,13 @@ class StageID(PipelineStage):
             self.data.alu_op_b = emu_data.getRegister(self.data.ins.rt)
             self.data.dst_to_write = self.data.ins.rd
         else:
-            self.data.alu_op_b = self.data.ins.imm
+            # special cases for BEQ/BZ
+            if self.data.ins.opcode == Opcode.BZ:
+                self.data.alu_op_b = 0
+            elif self.data.ins.opcode == Opcode.BEQ:
+                self.data.alu_op_b = emu_data.getRegister(self.data.ins.rt)
+            else:
+                self.data.alu_op_b = self.data.ins.imm
             self.data.dst_to_write = self.data.ins.rt
 
         # determine dst type
@@ -488,8 +516,10 @@ class StageID(PipelineStage):
         :return:
         """
 
-        status = ''
-        status += self.data.ins.toString()
+        status = super().getStatus()
+        if self.isDoingNothing():
+            return status
+
         status += f' ('\
                   f'alu_a={self.data.alu_op_a}, ' \
                   f'alu_b={self.data.alu_op_b}, ' \
@@ -505,6 +535,36 @@ class StageEX(PipelineStage):
     Stage 03: Execution
     """
 
+    def compute(self, opcode: Opcode, op_a: int, op_b: int) -> int:
+        """
+        Compute & return result based on the given opcode
+
+        :param opcode: opcode to determine operation to perform on the two given operands
+        :param op_a: the 1st operand
+        :param op_b: the 2nd operand
+        :return: the computed value
+        """
+
+        if opcode == Opcode.ADD or opcode == Opcode.ADDI or opcode == Opcode.LDW or opcode == Opcode.STW:
+            return op_a + op_b
+
+        if opcode == Opcode.SUB or opcode == Opcode.SUBI:
+            return op_a - op_b
+
+        if opcode == Opcode.MUL or opcode == Opcode.MULI:
+            return op_a * op_b
+
+        if opcode == Opcode.OR or opcode == Opcode.ORI:
+            return op_a | op_b
+
+        if opcode == Opcode.AND or opcode == Opcode.ANDI:
+            return op_a & op_b
+
+        if opcode == Opcode.XOR or opcode == Opcode.XORI:
+            return op_a ^ op_b
+
+        raise Exception(f'StageEX: unsupported ALU operation for opcode {opcode.name}')
+
     def execute(self, prev_stage: 'PipelineStage'):
         """
         Execute this stage to emulate one step/cycle in the pipeline
@@ -519,9 +579,37 @@ class StageEX(PipelineStage):
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
 
-        # ignore if HALT
-        if self.data.ins.opcode == Opcode.HALT:
+        # ignore if HALT/NOOP
+        if self.isDoingNothing():
             return
+
+        # handle BEQ/BZ/JR: should we branch? branch-addr?
+        self.data.is_branch = False
+        if self.data.ins.isControlTransfer():
+            if self.data.ins.opcode == Opcode.JR:
+                self.data.is_branch = True
+                self.data.branch_addr = self.data.alu_op_a
+            else:
+                self.data.alu_result = self.data.alu_op_a - self.data.alu_op_b
+                self.data.is_branch = (self.data.alu_result == 0)
+                self.data.branch_addr = self.data.ins.imm
+            return
+
+        # perform ALU operation based on the opcode
+        self.data.alu_result = self.compute(self.data.ins.opcode, self.data.alu_op_a, self.data.alu_op_b)
+
+    def getStatus(self) -> str:
+        status = super().getStatus()
+        if self.isDoingNothing():
+            return status
+
+        status += f' (' \
+                  f'alu_result={self.data.alu_result}, ' \
+                  f'is_branch={self.data.is_branch}, ' \
+                  f'branch_addr={self.data.branch_addr}' \
+                  f')'
+
+        return status
 
 
 class StageMEM(PipelineStage):
@@ -529,7 +617,7 @@ class StageMEM(PipelineStage):
     Stage 04: Memory Access
     """
 
-    def execute(self, prev_stage: 'PipelineStage'):
+    def execute(self, prev_stage: 'PipelineStage', emu_data: 'EmuData'):
         """
         Execute this stage to emulate one step/cycle in the pipeline
 
@@ -543,8 +631,14 @@ class StageMEM(PipelineStage):
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
 
-        # ignore if HALT
-        if self.data.ins.opcode == Opcode.HALT:
+        # ignore if HALT/NOOP
+        if self.isDoingNothing():
+            return
+
+        # handle LDW
+        if self.data.ins.opcode == Opcode.LDW:
+            self.data.mem_addr = int(self.data.alu_result / 4)
+            self.data.data_to_write = emu_data.getMemInt(self.data.mem_addr)
             return
 
 
@@ -570,8 +664,8 @@ class StageWB(PipelineStage):
         # determine if HALT is processed
         self.data.is_halt_done_WB = self.data.ins.opcode == Opcode.HALT
 
-        # ignore if HALT
-        if self.data.ins.opcode == Opcode.HALT:
+        # ignore if HALT/NOOP
+        if self.isDoingNothing():
             return
 
 
@@ -850,19 +944,30 @@ class Emulator:
         if self.is_halted:
             return
 
+        """
+        1/ BEGIN OF CYCLE:
+            - check for hazards & stall (by disabling appropriate stages)
+            - check to forward (if stall)
+        """
+
         # check for hazards to enable/disable stages
+
+        """
+        2/ DURING CYCLE:
+            - emulate the pipeline with 5 stages
+        """
 
         # Stage 5: WB
         self.stage_WB.execute(self.stage_MEM)
-        print('WB  --> ', self.stage_WB.data.ins.toString(), sep='')
+        print('WB  --> ', self.stage_WB.getStatus(), sep='')
 
         # Stage 4: MEM
         self.stage_MEM.execute(self.stage_EX)
-        print('MEM --> ', self.stage_MEM.data.ins.toString(), sep='')
+        print('MEM --> ', self.stage_MEM.getStatus(), sep='')
 
         # Stage 3: EX
         self.stage_EX.execute(self.stage_ID)
-        print('EX  --> ', self.stage_EX.data.ins.toString(), sep='')
+        print('EX  --> ', self.stage_EX.getStatus(), sep='')
 
         # Stage 2: ID
         self.stage_ID.execute(self.stage_IF, self.mem_out)
@@ -870,7 +975,7 @@ class Emulator:
 
         # Stage 1: IF
         self.stage_IF.execute(self.mem_out)
-        print('IF  --> ', self.stage_IF.data.ins.toString(), sep='')
+        print('IF  --> ', self.stage_IF.getStatus(), sep='')
 
         # determine next PC
         self.mem_out.pc += 1
@@ -880,6 +985,11 @@ class Emulator:
 
         # count cycles
         self.count_cycles += 1
+
+        """
+        3/ END OF CYCLE:
+            - recover/flush incorrect fetched instruction
+        """
 
         print()
 
