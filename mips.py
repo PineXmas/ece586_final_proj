@@ -219,6 +219,15 @@ class Instruction:
 
         return self.opcode in self.list_control_types
 
+    def isIType_RegWrite(self):
+        """
+        Return True if this instruction is I-type with a register write as the final impact
+
+        :return:
+        """
+
+        return (self.opcode in self.list_logic_types) or (self.opcode in self.list_arithmetic_types) or self.opcode == Opcode.LDW
+
     def getType(self) -> str:
         """
         Return type of this instruction as string
@@ -331,18 +340,25 @@ class StageData:
         # flag: if HALT is processed in stage WB
         self.is_halt_done_WB = False
 
+        # flag: determine if we should take the branch
+        self.is_branch = False
+
         # intermediate computation values
         self.alu_result = 0             # store computed ALU result used by stages MEM and WB
         self.alu_op_a = 0
         self.alu_op_b = 0
+
+        # store:
+        # - mem val to write to reg (LDW)
+        # - reg val to write to mem (STW)
+        # - ALU val to write to reg (R/I-type)
         self.data_to_write = 0
-        self.dst_to_write = 0           # mem addr/reg index
+
+        # store destination in terms of: mem addr OR reg index
+        self.dst_to_write = 0
 
         # destination: rd, mem or PC
         self.dst_type = WriteDst.NOT_SET
-
-        # flag: in case we should take the branch
-        self.is_branch = False
 
         # branch address in case we should take the branch
         self.branch_addr = 0
@@ -350,11 +366,8 @@ class StageData:
         # memory address used for LDW/STW
         self.mem_addr = 0
 
-        # value to store to memory, used by STW only
-        # TODO: continue with store_val
-        self.store_val = 0
-
-        # record indices of input registers also to check for hazards
+        # record indices of input registers to check for hazards
+        self.input_indices = set()
 
 
 class PipelineStage:
@@ -441,6 +454,37 @@ class StageIF(PipelineStage):
         # determine to stop fetching
         self.data.is_halt_done_IF = (self.data.ins.opcode == Opcode.HALT)
 
+        # ----------
+        # Sneak peek at input/output registers
+        # ----------
+        # Note: even though we suppose to decode the instruction in stage ID, we take a "sneak peek" in the
+        # registers in this stage in order to detect hazards easier later
+        #
+        self.data.input_indices.clear()
+        self.data.input_indices.add(self.data.ins.rs)
+        if self.data.ins.isRType() or self.data.ins.opcode == Opcode.BEQ or self.data.ins.opcode == Opcode.STW:
+            self.data.input_indices.add(self.data.ins.rt)
+        if self.data.ins.isRType():
+            self.data.dst_to_write = self.data.ins.rd
+        elif self.data.ins.isIType_RegWrite():
+            self.data.dst_to_write = self.data.ins.rt
+        else:
+            self.data.dst_to_write = -1
+
+        # TODO: PC + 1 should be placed in stage IF
+
+    def getStatus(self) -> str:
+        status = super().getStatus()
+        if self.isDoingNothing():
+            return status
+
+        status += f' ('\
+                  f'input={self.data.input_indices}' \
+                  f', dst_to_write={self.data.dst_to_write}' \
+                  f')'
+
+        return status
+
 
 class StageID(PipelineStage):
     """
@@ -468,6 +512,10 @@ class StageID(PipelineStage):
         # ----------
         # Decode
         # ----------
+        # - input registers, ALU operands
+        # - destination registers
+        # - branch address
+        #
 
         # ALU operand a: is always reg[rs]
         self.data.alu_op_a = emu_data.getRegister(self.data.ins.rs)
@@ -475,16 +523,18 @@ class StageID(PipelineStage):
         # ALU operand b: depend on R-type or I-type
         if self.data.ins.isRType():
             self.data.alu_op_b = emu_data.getRegister(self.data.ins.rt)
-            self.data.dst_to_write = self.data.ins.rd
         else:
-            # special cases for BEQ/BZ
-            if self.data.ins.opcode == Opcode.BZ:
+            # special cases for BEQ/BZ/STW
+            if self.data.ins.opcode == Opcode.STW:
+                self.data.data_to_write = emu_data.getRegister(self.data.ins.rt)
+            elif self.data.ins.opcode == Opcode.BZ:
                 self.data.alu_op_b = 0
+                self.data.branch_addr = self.data.ins.imm
             elif self.data.ins.opcode == Opcode.BEQ:
                 self.data.alu_op_b = emu_data.getRegister(self.data.ins.rt)
+                self.data.branch_addr = self.data.ins.imm
             else:
                 self.data.alu_op_b = self.data.ins.imm
-            self.data.dst_to_write = self.data.ins.rt
 
         # determine dst type
         if self.data.ins.opcode == Opcode.STW:
@@ -524,7 +574,7 @@ class StageID(PipelineStage):
                   f'alu_a={self.data.alu_op_a}, ' \
                   f'alu_b={self.data.alu_op_b}, ' \
                   f'dst_type={self.data.dst_type.name}, ' \
-                  f'dst_to_write={self.data.dst_to_write}' \
+                  f'data_to_write={self.data.data_to_write}' \
                   f')'
 
         return status
@@ -598,6 +648,14 @@ class StageEX(PipelineStage):
         # perform ALU operation based on the opcode
         self.data.alu_result = self.compute(self.data.ins.opcode, self.data.alu_op_a, self.data.alu_op_b)
 
+        # prepare data-to-write
+        if self.data.ins.opcode != Opcode.STW:
+            self.data.data_to_write = self.data.alu_result
+
+        # handle LDW/STW: prepare memory address
+        if self.data.ins.isMemoryAccess():
+            self.data.mem_addr = int(self.data.alu_result / 4)
+
     def getStatus(self) -> str:
         status = super().getStatus()
         if self.isDoingNothing():
@@ -635,11 +693,10 @@ class StageMEM(PipelineStage):
         if self.isDoingNothing():
             return
 
-        # handle LDW
-        if self.data.ins.opcode == Opcode.LDW:
-            self.data.mem_addr = int(self.data.alu_result / 4)
-            self.data.data_to_write = emu_data.getMemInt(self.data.mem_addr)
-            return
+        # # handle LDW
+        # if self.data.ins.opcode == Opcode.LDW:
+        #     self.data.data_to_write = emu_data.getMemInt(self.data.mem_addr)
+        #     return
 
 
 class StageWB(PipelineStage):
@@ -962,7 +1019,7 @@ class Emulator:
         print('WB  --> ', self.stage_WB.getStatus(), sep='')
 
         # Stage 4: MEM
-        self.stage_MEM.execute(self.stage_EX)
+        self.stage_MEM.execute(self.stage_EX, self.mem_out)
         print('MEM --> ', self.stage_MEM.getStatus(), sep='')
 
         # Stage 3: EX
