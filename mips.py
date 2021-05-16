@@ -471,8 +471,6 @@ class StageIF(PipelineStage):
         else:
             self.data.dst_to_write = -1
 
-        # TODO: PC + 1 should be placed in stage IF
-
     def getStatus(self) -> str:
         status = super().getStatus()
         if self.isDoingNothing():
@@ -638,6 +636,8 @@ class StageEX(PipelineStage):
         if self.data.ins.isControlTransfer():
             if self.data.ins.opcode == Opcode.JR:
                 self.data.is_branch = True
+                # TODO: double check the branch-addr: use as is OR divide by 4 ???.
+                #  Use as is for now. The example "sample_memory_image" also hints "as is" usage (see BEQ/BZ)
                 self.data.branch_addr = self.data.alu_op_a
             else:
                 self.data.alu_result = self.data.alu_op_a - self.data.alu_op_b
@@ -663,8 +663,10 @@ class StageEX(PipelineStage):
 
         status += f' (' \
                   f'alu_result={self.data.alu_result}, ' \
+                  f'data_2_write={self.data.data_to_write}, ' \
                   f'is_branch={self.data.is_branch}, ' \
-                  f'branch_addr={self.data.branch_addr}' \
+                  f'branch_addr={self.data.branch_addr}, ' \
+                  f'mem_addr={self.data.mem_addr}' \
                   f')'
 
         return status
@@ -1034,19 +1036,27 @@ class Emulator:
         self.stage_IF.execute(self.mem_out)
         print('IF  --> ', self.stage_IF.getStatus(), sep='')
 
-        # determine next PC
+        """
+        3/ END OF CYCLE:
+            - recover/flush incorrect fetched instruction
+            - PC
+        """
+
+        # determine next PC: sequential or branch
+        # TODO: sequential only for now, handle branch later
+        print(f'this PC = {self.mem_out.pc}')
+        # if self.stage_EX.data.is_branch:
+        #     self.mem_out.pc = self.stage_EX.data.branch_addr
+        #     print(f'next PC = branch to {self.stage_EX.data.branch_addr}')
+        # else:
         self.mem_out.pc += 1
+        print(f'next PC = sequential {self.mem_out.pc}')
 
         # determine if the emulation should be halted
         self.is_halted = self.stage_WB.data.is_halt_done_WB
 
         # count cycles
         self.count_cycles += 1
-
-        """
-        3/ END OF CYCLE:
-            - recover/flush incorrect fetched instruction
-        """
 
         print()
 
