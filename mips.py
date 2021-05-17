@@ -8,6 +8,7 @@ Provide all tools/API for working with Lite MIPS
 from enum import Enum, auto
 import os.path
 import copy
+import re
 
 # -------------------- DEFINES --------------------
 
@@ -137,7 +138,7 @@ class Instruction:
     list_mem_types = [Opcode.LDW, Opcode.STW]
 
     # register symbol
-    R_str = '$'
+    R_str = 'R'
 
     def __init__(self):
         """
@@ -281,10 +282,10 @@ class Instruction:
     @staticmethod
     def parse(hex_str: str):
         """
-        Parse a given string of hex values to an lite-MIPS instruction
+        Parse a given string of hex values to a lite-MIPS instruction
 
         :param hex_str: the string containing hex values
-        :return: NULL if failed, the Instruction obj if success
+        :return: UNKNOWN instruction if failed, the instruction with correct opcode if success
         """
 
         # prepare result
@@ -317,6 +318,23 @@ class Instruction:
             ins.opcode = Opcode.UNKNOWN
 
         return ins
+
+    @staticmethod
+    def parseInsStr(ins_str: str) -> str:
+        """
+        Parse a given string of instruction to a string of corresponding hex values, if valid
+
+        :param ins_str: the instruction string, e.g.: "ADD R3, R1, R2", to parse
+        :return: empty string if the given string is invalid format
+        """
+
+        # format & break the string into tokens
+        ins_str = ins_str.upper()
+        tokens = re.findall(r"[\w']+", ins_str)
+
+        # TODO: continue here
+
+        return ''
 
 
 class StageData:
