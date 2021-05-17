@@ -695,10 +695,26 @@ class StageMEM(PipelineStage):
         if self.isDoingNothing():
             return
 
-        # # handle LDW
-        # if self.data.ins.opcode == Opcode.LDW:
-        #     self.data.data_to_write = emu_data.getMemInt(self.data.mem_addr)
-        #     return
+        # handle LDW
+        if self.data.ins.opcode == Opcode.LDW:
+            self.data.data_to_write = emu_data.getMemInt(self.data.mem_addr)
+            return
+
+        # handle STW
+        if self.data.ins.opcode == Opcode.STW:
+            emu_data.setMemInt(self.data.mem_addr, self.data.data_to_write)
+            return
+
+    def getStatus(self) -> str:
+
+        status = super().getStatus()
+
+        if self.data.ins.opcode == Opcode.LDW:
+            status += f' (data_2_write = mem[{self.data.mem_addr}] = {self.data.data_to_write})'
+        elif self.data.ins.opcode == Opcode.STW:
+            status += f' (mem[{self.data.mem_addr}] = {self.data.data_to_write})'
+
+        return status
 
 
 class StageWB(PipelineStage):
@@ -706,7 +722,7 @@ class StageWB(PipelineStage):
     Stage 05: Write Back
     """
 
-    def execute(self, prev_stage: 'PipelineStage'):
+    def execute(self, prev_stage: 'PipelineStage', emu_data: 'EmuData'):
         """
         Execute this stage to emulate one step/cycle in the pipeline
 
@@ -726,6 +742,19 @@ class StageWB(PipelineStage):
         # ignore if HALT/NOOP
         if self.isDoingNothing():
             return
+
+        # write back to registers
+        if self.data.dst_to_write == WriteDst.REG:
+            emu_data.setRegister(self.data.dst_to_write, self.data.data_to_write)
+
+    def getStatus(self) -> str:
+
+        status = super().getStatus()
+
+        if self.data.dst_to_write == WriteDst.REG:
+            status += f' (R{self.data.data_to_write} = {self.data.data_to_write})'
+
+        return status
 
 
 class EmuData:
@@ -1017,7 +1046,7 @@ class Emulator:
         """
 
         # Stage 5: WB
-        self.stage_WB.execute(self.stage_MEM)
+        self.stage_WB.execute(self.stage_MEM, self.mem_out)
         print('WB  --> ', self.stage_WB.getStatus(), sep='')
 
         # Stage 4: MEM
@@ -1042,18 +1071,19 @@ class Emulator:
             - PC
         """
 
-        # determine next PC: sequential or branch
-        # TODO: sequential only for now, handle branch later
-        print(f'this PC = {self.mem_out.pc}')
-        # if self.stage_EX.data.is_branch:
-        #     self.mem_out.pc = self.stage_EX.data.branch_addr
-        #     print(f'next PC = branch to {self.stage_EX.data.branch_addr}')
-        # else:
-        self.mem_out.pc += 1
-        print(f'next PC = sequential {self.mem_out.pc}')
-
         # determine if the emulation should be halted
         self.is_halted = self.stage_WB.data.is_halt_done_WB
+
+        # TODO: note the case IF.data.is_halt_done_IF should be undone if branch is near HALT !!!
+
+        # determine next PC: sequential or branch
+        if self.stage_EX.data.is_branch:
+            self.mem_out.pc = self.stage_EX.data.branch_addr
+            print(f'next PC = {self.stage_EX.data.branch_addr} (branch)')
+        else:
+            # FIXME: in case HALT is encountered at IF, PC should not be increased!
+            self.mem_out.pc += 1
+            print(f'next PC = {self.mem_out.pc} (sequential)')
 
         # count cycles
         self.count_cycles += 1
