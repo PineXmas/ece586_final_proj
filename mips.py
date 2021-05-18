@@ -34,7 +34,32 @@ MAX_HEX_LENGTH = 8
 # max length in bit of an instruction
 LEN_INS = MAX_HEX_LENGTH * 4
 
+# min imm value
+MIN_IMM = -int(2 ** LEN_IMM / 2)
+
+# max imm value
+MAX_IMM = int(2 ** LEN_IMM / 2) - 1
+
+# number of stages in the pipeline
+N_STAGES = 5
+
+
 # -------------------- FUNCS --------------------
+
+
+def genBitMask(bit_length: int):
+    """
+    Generate a bit mask based on the number of required bit-length
+
+    :param bit_length:
+    :return:
+    """
+
+    bin_str = ''
+    for i in range(bit_length):
+        bin_str += '1'
+
+    return int(bin_str, 2)
 
 
 def convertHex2Bin(hex_str: str):
@@ -73,17 +98,72 @@ def convertBin2SignedInt(bin_str: str, bit_length) -> int:
     return num
 
 
-def convertSignedInt2Hex(signed_int: int) -> str:
+def convertSignedInt2Hex(signed_int: int, bit_length=LEN_INS) -> str:
     """
     Convert the given signed integer into its corresponding hex string
 
+    :param bit_length:
     :param signed_int: the signed integer
     :return:
     """
 
-    hex_str = hex(signed_int & INT_MASK_32)
-    hex_str = hex_str[2:].zfill(MAX_HEX_LENGTH)
+    # mask to indicate how many bits we want to take into account of
+    mask = genBitMask(bit_length)
+    hex_str = hex(signed_int & mask)
+
+    # fill with leading 0
+    hex_len = int(bit_length / 4)
+    hex_str = hex_str[2:].zfill(hex_len)
     return hex_str
+
+
+def convertSignedInt2Bin(signed_int: int, bit_length: int) -> str:
+    """
+    Convert the given signed integer into its corresponding binary string
+
+    :param bit_length:
+    :param signed_int: the signed integer
+    :return:
+    """
+
+    # mask to indicate how many bits we want to take into account of
+    mask = genBitMask(bit_length)
+    bin_str = bin(signed_int & mask)
+
+    # fill with leading 0
+    bin_str = bin_str[2:].zfill(bit_length)
+    return bin_str
+
+
+def convertBin2Hex(bin_str: str, hex_length=MAX_HEX_LENGTH) -> str:
+    """
+    Convert the given binary string to corresponding hex string
+
+    :param bin_str:
+    :param hex_length: the number of digits in the resulting hex string
+    :return:
+    """
+
+    # convert to hex
+    hex_str = hex(int(bin_str, 2))
+
+    # fill leading 0 to hex
+    return hex_str[2:].zfill(hex_length)
+
+
+def getNameList(list_enum: []) -> []:
+    """
+    Return a list of name string corresponding to the given list of enum
+
+    :param list_enum: list of input enums
+    :return: list of enum names
+    """
+
+    list_names = []
+    for enum in list_enum:
+        list_names.append(enum.name)
+    return list_names
+
 
 # -------------------- CLASS --------------------
 
@@ -113,6 +193,24 @@ class Opcode(Enum):
     HALT = 17
     NOOP = 0b111110
     UNKNOWN = 0b111111
+
+    def __int__(self):
+        """
+        Convert this enum to its corresponding integer value
+
+        :return:
+        """
+        return self.value
+
+    @staticmethod
+    def getList() -> []:
+        """
+        Get list of all enum in this class
+
+        :return:
+        """
+
+        return list(map(lambda opcode: opcode, Opcode))
 
 
 class WriteDst(Enum):
@@ -166,15 +264,6 @@ class Instruction:
 
         return self.toString()
 
-    # def clone(self) -> 'Instruction':
-    #     """
-    #     Clone this object & return (deep copy)
-    #     :return:
-    #     """
-    #
-    #     cloned = Instruction()
-    #     cloned.opcode = self.
-
     def isRType(self):
         """
         Check if this instruction is of R-type
@@ -227,7 +316,8 @@ class Instruction:
         :return:
         """
 
-        return (self.opcode in self.list_logic_types) or (self.opcode in self.list_arithmetic_types) or self.opcode == Opcode.LDW
+        return (self.opcode in self.list_logic_types) or (
+                    self.opcode in self.list_arithmetic_types) or self.opcode == Opcode.LDW
 
     def getType(self) -> str:
         """
@@ -320,6 +410,57 @@ class Instruction:
         return ins
 
     @staticmethod
+    def checkValidReg(reg_str: str) -> int:
+        """
+        Check & parse if the given reg-string is valid, that is "Rx", with x is from 0 to 31
+
+        :param reg_str:
+        :return: register-index if success (>=0), -1 if failed
+        """
+
+        # check valid
+        if len(reg_str) <= 1:
+            return -1
+        if reg_str[0] != 'R':
+            return -1
+        if not reg_str[1:].isnumeric():
+            return -1
+
+        # check range
+        reg = int(reg_str[1:])
+        if reg >= MAX_REGS:
+            return -1
+
+        return reg
+
+    @staticmethod
+    def checkValidImm(imm_str: str) -> (bool, int):
+        """
+        Check & parse if the given imm-string is valid, that is numeric and in range
+
+        :param imm_str:
+        :return: (True, imm) if success, (False, ...) if failed
+        """
+
+        # check valid
+        if len(imm_str) <= 0:
+            return False, 0
+        if not imm_str.isnumeric():
+            # invalid positive
+            if imm_str[0] != '-':
+                return False, 0
+            # invalid negative
+            if not imm_str[1:].isnumeric():
+                return False, 0
+
+        # check range
+        imm = int(imm_str)
+        if imm < MIN_IMM or imm > MAX_IMM:
+            return False, 0
+
+        return True, imm
+
+    @staticmethod
     def parseInsStr(ins_str: str) -> str:
         """
         Parse a given string of instruction to a string of corresponding hex values, if valid
@@ -329,12 +470,112 @@ class Instruction:
         """
 
         # format & break the string into tokens
-        ins_str = ins_str.upper()
-        tokens = re.findall(r"[\w']+", ins_str)
+        ins_str = ins_str.upper().strip()
+        tokens = re.findall(r"[-]*[\w']+", ins_str)
+        if len(tokens) <= 0:
+            return ''
 
-        # TODO: continue here
+        # prepare a binary-string & list of integers
+        bin_str = ''
+        list_vals = []
+        list_bit_len = []
 
-        return ''
+        # parse the opcode to enum if valid
+        opcode = tokens[0]
+        if opcode not in getNameList(Opcode.getList()):
+            return ''
+        opcode = Opcode[opcode]
+        bin_str += convertSignedInt2Bin(int(opcode), LEN_OP)
+        print(f'opcode={opcode}, bin_str={bin_str}')
+
+        if len(tokens) == 4:
+
+            # parse R-type
+            if opcode in Instruction.list_R_types:
+                # parse registers
+                for i in range(1, 4):
+                    reg = Instruction.checkValidReg(tokens[i])
+                    if reg < 0:
+                        return ''
+                    list_vals.append(reg)
+                    list_bit_len.append(LEN_REG)
+                # rearrange register order
+                tmp = list_vals.pop(0)
+                list_vals.append(tmp)
+
+            # parse I-type (no BZ/JR/HALT)
+            elif opcode not in [Opcode.BZ, Opcode.JR, Opcode.HALT]:
+                # parse registers
+                for i in range(1, 3):
+                    reg = Instruction.checkValidReg(tokens[3-i])
+                    if reg < 0:
+                        return ''
+                    list_vals.append(reg)
+                    list_bit_len.append(LEN_REG)
+                # parse imm
+                (is_ok, imm) = Instruction.checkValidImm(tokens[3])
+                if not is_ok:
+                    return ''
+                list_vals.append(imm)
+                list_bit_len.append(LEN_IMM)
+            else:
+                return ''
+
+        # parse BZ/JR
+        elif (opcode == Opcode.BZ and len(tokens) == 3) or (opcode == Opcode.JR and len(tokens) == 2):
+            # parse rs
+            reg = Instruction.checkValidReg(tokens[1])
+            if reg < 0:
+                return ''
+            list_vals.append(reg)
+            list_bit_len.append(LEN_REG)
+            # insert empty rt
+            list_vals.append(0)
+            list_bit_len.append(LEN_REG)
+            # parse imm if BZ
+            if opcode == Opcode.BZ:
+                (is_ok, imm) = Instruction.checkValidImm(tokens[2])
+                if not is_ok:
+                    return ''
+                list_vals.append(imm)
+                list_bit_len.append(LEN_IMM)
+        elif opcode != Opcode.HALT and opcode != Opcode.NOOP:
+            return ''
+
+        # parse integers & concatenate to binary-string
+        for (val, bit_len) in list(zip(list_vals, list_bit_len)):
+            bin_str += convertSignedInt2Bin(val, bit_len)
+        if len(bin_str) < LEN_INS:
+            bin_str += '0' * (LEN_INS - len(bin_str))
+
+        hex_str = convertBin2Hex(bin_str).upper()
+        return hex_str
+
+    @staticmethod
+    def parseInsFile(file_in: str, file_out: str):
+        """
+        Parse all instruction in the given input file & write to the given output file
+        :param file_in:
+        :param file_out:
+        :return:
+        """
+
+        # check & open files
+        if not os.path.isfile(file_in):
+            print('File not exist:', file_in)
+            return
+        fin = open(file_in, "r")
+        fout = open(file_out, "w")
+
+        # add all lines from the file to the memory
+        for ins_str in fin:
+            ins_str = ins_str.strip()
+            hex_str = Instruction.parseInsStr(ins_str) + '\n'
+            fout.write(hex_str)
+
+        # close file
+        fin.close()
+        fout.close()
 
 
 class StageData:
@@ -361,8 +602,11 @@ class StageData:
         # flag: determine if we should take the branch
         self.is_branch = False
 
+        # flag: if this stage is stalled so that the data should not be propagated
+        self.is_stall = False
+
         # intermediate computation values
-        self.alu_result = 0             # store computed ALU result used by stages MEM and WB
+        self.alu_result = 0  # store computed ALU result used by stages MEM and WB
         self.alu_op_a = 0
         self.alu_op_b = 0
 
@@ -412,10 +656,10 @@ class PipelineStage:
         """
 
         if self.is_stall:
-            self.data.ins = Instruction()
-            self.data.ins.opcode = Opcode.NOOP
+            self.data.is_stall = True
             return True
 
+        self.data.is_stall = False
         return False
 
     def setStall(self, is_stall: bool):
@@ -494,7 +738,7 @@ class StageIF(PipelineStage):
         if self.isDoingNothing():
             return status
 
-        status += f' ('\
+        status += f' (' \
                   f'input={self.data.input_indices}' \
                   f', dst_to_write={self.data.dst_to_write}' \
                   f')'
@@ -586,7 +830,7 @@ class StageID(PipelineStage):
         if self.isDoingNothing():
             return status
 
-        status += f' ('\
+        status += f' (' \
                   f'alu_a={self.data.alu_op_a}, ' \
                   f'alu_b={self.data.alu_op_b}, ' \
                   f'dst_type={self.data.dst_type.name}, ' \
@@ -681,7 +925,7 @@ class StageEX(PipelineStage):
 
         status += f' (' \
                   f'alu_result={self.data.alu_result}, ' \
-                  f'data_2_write={self.data.data_to_write}, ' \
+                  f'data_to_write={self.data.data_to_write}, ' \
                   f'is_branch={self.data.is_branch}, ' \
                   f'branch_addr={self.data.branch_addr}, ' \
                   f'mem_addr={self.data.mem_addr}' \
@@ -728,7 +972,7 @@ class StageMEM(PipelineStage):
         status = super().getStatus()
 
         if self.data.ins.opcode == Opcode.LDW:
-            status += f' (data_2_write = mem[{self.data.mem_addr}] = {self.data.data_to_write})'
+            status += f' (data_to_write = mem[{self.data.mem_addr}] = {self.data.data_to_write})'
         elif self.data.ins.opcode == Opcode.STW:
             status += f' (mem[{self.data.mem_addr}] = {self.data.data_to_write})'
 
@@ -762,15 +1006,15 @@ class StageWB(PipelineStage):
             return
 
         # write back to registers
-        if self.data.dst_to_write == WriteDst.REG:
+        if self.data.dst_type == WriteDst.REG:
             emu_data.setRegister(self.data.dst_to_write, self.data.data_to_write)
 
     def getStatus(self) -> str:
 
         status = super().getStatus()
 
-        if self.data.dst_to_write == WriteDst.REG:
-            status += f' (R{self.data.data_to_write} = {self.data.data_to_write})'
+        if self.data.dst_type == WriteDst.REG:
+            status += f' (R{self.data.dst_to_write} = {self.data.data_to_write})'
 
         return status
 
@@ -979,6 +1223,15 @@ class EmuData:
 
         return self.mem[mem_addr]
 
+    def getMemLen(self):
+        """
+        Get length of memory, should not exceed 1024
+
+        :return:
+        """
+
+        return len(self.mem)
+
 
 class Emulator:
     """
@@ -1011,6 +1264,7 @@ class Emulator:
         self.stage_EX = StageEX()
         self.stage_MEM = StageMEM()
         self.stage_WB = StageWB()
+        self.stages = [self.stage_IF, self.stage_ID, self.stage_EX, self.stage_MEM, self.stage_WB]
 
     def loadFromFile(self, file_path: str):
         """
@@ -1056,7 +1310,10 @@ class Emulator:
             - check to forward (if stall)
         """
 
-        # check for hazards to enable/disable stages
+        # # check for hazards to enable/disable stages
+        # for i in range(N_STAGES-1, -1, -1):
+        #     if self.stages[i].data.dst_to_write in
+
 
         """
         2/ DURING CYCLE:
@@ -1130,7 +1387,26 @@ class Emulator:
         """
 
         report = ''
-        report += 'Total cycles = ' + str(self.count_cycles)
+
+        # cycles
+        report += f'Total cycles = {self.count_cycles}\n'
+
+        # register
+        report += '\nRegisters:\n'
+        for i in range(MAX_REGS):
+            reg_in = self.mem_in.getRegister(i)
+            reg_out = self.mem_out.getRegister(i)
+            if reg_in != reg_out:
+                report += f'  R[{i}] = {reg_out}\n'
+
+        # memory
+        report += '\nMemory:\n'
+        for i in range(self.mem_in.getMemLen()):
+            val_in = self.mem_in.getMemStr(i)
+            val_out = self.mem_out.getMemStr(i)
+            if val_in != val_out:
+                report += f'[{i}] = {val_out}\n'
+
         return report
 
     def execute(self):

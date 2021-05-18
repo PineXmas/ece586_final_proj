@@ -13,7 +13,7 @@ def testInstruction():
 
 def testEmuData():
     # load memory image
-    file_path = 'data/test_02.txt'
+    file_path = 'data/sample_memory_image.txt'
     d1 = mips.EmuData()
     d1.loadFromFile(file_path)
     print('EmuData memory loaded')
@@ -37,12 +37,27 @@ def testEmuData():
     print('[After ] Get memory at address', mem_addr, ':', mem_val_read)
 
 
+def testConvertSignedInt2Bin():
+    num = -32767
+    max_num = 32766
+    bit_length = 16
+    while num <= max_num:
+        num_from_hex = mips.convertBin2SignedInt(mips.convertHex2Bin(mips.convertSignedInt2Hex(num)), bit_length)
+        num_from_bin = mips.convertBin2SignedInt(mips.convertSignedInt2Bin(num, bit_length), bit_length)
+        if num_from_bin != num_from_hex:
+            print(f'Error: num={num}, num_from_hex={num_from_hex}, num_from_bin={num_from_bin}')
+            return
+        num += 1
+
+    print('PASS OK')
+
+
 def testEmulator():
     # load memory image
     emu = mips.Emulator()
     # file_path = "data/sample_memory_image.txt"
-    # file_path = "data/test_02.txt"
-    file_path = "data/extra_ex_07.txt"
+    file_path = "data/test_03.txt"
+    # file_path = "data/extra_ex_07.txt"
     emu.loadFromFile(file_path)
     print('Number of mem lines =', len(emu.mem_in.mem))
 
@@ -54,11 +69,46 @@ def testEmulator():
     print(emu.getReportString())
 
 
+def testParseInsStr():
+
+    list_tests = [
+        ('add r1, r2, r9', '00490800'),
+        ('LDW R3, r30, 10', '33C3000A'),
+        ('SUB R5, R1, R3', '08232800'),
+        ('ADDI R17, R18, -32767', '06518001'),
+        ('BEQ R17, R18, 16', '3E510010'),
+        ('BEQ R17, R18, -2', '3E51FFFE'),
+        ('BZ R6, 2', '38C00002'),
+        ('JR R12', '41800000'),
+        ('halt', '44000000')
+    ]
+
+    for test in list_tests:
+        ins_str = test[0]
+        expected = test[1]
+        hex_str = mips.Instruction.parseInsStr(ins_str)
+        if hex_str != expected:
+            print('ERROR:')
+            print(f'parsed  ={hex_str}')
+            print(f'expected={expected}')
+            print()
+
+
+def testParseInsFile():
+
+    file_in = 'data/test_03_output.txt'
+    file_out = 'data/test_03.txt'
+    mips.Instruction.parseInsFile(file_in, file_out)
+
+
 def main():
     print('Hello from main')
 
+    # testParseInsFile()
     testEmulator()
     # testEmuData()
+    # testConvertSignedInt2Bin()
+    # testParseInsStr()
 
 
 if __name__ == '__main__':
