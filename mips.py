@@ -678,7 +678,7 @@ class PipelineStage:
         :return:
         """
 
-        if not self.is_stall:
+        if (not self.is_stall) and self.data.is_output_ready:
             return f'{self.data.ins.toString()}'
         else:
             return 'stall'
@@ -764,17 +764,17 @@ class StageID(PipelineStage):
         :return:
         """
 
-        # TODO: continue here: double check this before copy to other stages
         # check stall
         if self.checkStallAndPrepare():
             self.data.is_output_ready = False
             return
 
         # propagate data from previous stage if output is ready, skip otherwise
-        if prev_stage.data.is_output_ready:
-            self.data = copy.deepcopy(prev_stage.data)
-        else:
+        if not prev_stage.data.is_output_ready:
+            self.data.is_output_ready = False
             return
+        self.data = copy.deepcopy(prev_stage.data)
+        self.data.is_output_ready = True
 
         # ignore if HALT/NOOP
         if self.isDoingNothing():
@@ -899,7 +899,10 @@ class StageEX(PipelineStage):
             self.data.is_output_ready = False
             return
 
-        # take data from previous stage
+        # propagate data from previous stage if output is ready, skip otherwise
+        if not prev_stage.data.is_output_ready:
+            self.data.is_output_ready = False
+            return
         self.data = copy.deepcopy(prev_stage.data)
         self.data.is_output_ready = True
 
@@ -965,7 +968,10 @@ class StageMEM(PipelineStage):
             self.data.is_output_ready = False
             return
 
-        # take data from previous stage
+        # propagate data from previous stage if output is ready, skip otherwise
+        if not prev_stage.data.is_output_ready:
+            self.data.is_output_ready = False
+            return
         self.data = copy.deepcopy(prev_stage.data)
         self.data.is_output_ready = True
 
@@ -1014,7 +1020,10 @@ class StageWB(PipelineStage):
             self.data.is_output_ready = False
             return
 
-        # take data from previous stage
+        # propagate data from previous stage if output is ready, skip otherwise
+        if not prev_stage.data.is_output_ready:
+            self.data.is_output_ready = False
+            return
         self.data = copy.deepcopy(prev_stage.data)
         self.data.is_output_ready = True
 
