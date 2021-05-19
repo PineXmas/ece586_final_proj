@@ -602,6 +602,9 @@ class StageData:
         # flag: determine if we should take the branch
         self.is_branch = False
 
+        # flag: whether the output of this stage is ready to propagate or not
+        self.is_output_ready = False
+
         # intermediate computation values
         self.alu_result = 0  # store computed ALU result used by stages MEM and WB
         self.alu_op_a = 0
@@ -702,7 +705,11 @@ class StageIF(PipelineStage):
 
         # check stall
         if self.checkStallAndPrepare():
+            self.data.is_output_ready = False
             return
+
+        # mark output ready by default
+        self.data.is_output_ready = True
 
         # do nothing if HALT is encountered or stalled
         if self.data.is_halt_done_IF:
@@ -757,12 +764,17 @@ class StageID(PipelineStage):
         :return:
         """
 
+        # TODO: continue here: double check this before copy to other stages
         # check stall
         if self.checkStallAndPrepare():
+            self.data.is_output_ready = False
             return
 
-        # take data from previous stage
-        self.data = copy.deepcopy(prev_stage.data)
+        # propagate data from previous stage if output is ready, skip otherwise
+        if prev_stage.data.is_output_ready:
+            self.data = copy.deepcopy(prev_stage.data)
+        else:
+            return
 
         # ignore if HALT/NOOP
         if self.isDoingNothing():
@@ -785,7 +797,7 @@ class StageID(PipelineStage):
         else:
             # special cases for BEQ/BZ/STW
             if self.data.ins.opcode == Opcode.STW:
-                # TODO: avoid using data_to_write here, use alu_op_a instead to handle forwarding easier
+                # TODO: remember to check STW and forward to data_to_write
                 self.data.data_to_write = emu_data.getRegister(self.data.ins.rt)
             elif self.data.ins.opcode == Opcode.BZ:
                 self.data.alu_op_b = 0
@@ -884,10 +896,12 @@ class StageEX(PipelineStage):
 
         # check stall
         if self.checkStallAndPrepare():
+            self.data.is_output_ready = False
             return
 
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
+        self.data.is_output_ready = True
 
         # ignore if HALT/NOOP
         if self.isDoingNothing():
@@ -948,10 +962,12 @@ class StageMEM(PipelineStage):
 
         # check stall
         if self.checkStallAndPrepare():
+            self.data.is_output_ready = False
             return
 
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
+        self.data.is_output_ready = True
 
         # ignore if HALT/NOOP
         if self.isDoingNothing():
@@ -995,10 +1011,12 @@ class StageWB(PipelineStage):
 
         # check stall
         if self.checkStallAndPrepare():
+            self.data.is_output_ready = False
             return
 
         # take data from previous stage
         self.data = copy.deepcopy(prev_stage.data)
+        self.data.is_output_ready = True
 
         # determine if HALT is processed
         self.data.is_halt_done_WB = self.data.ins.opcode == Opcode.HALT

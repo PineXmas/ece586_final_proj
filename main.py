@@ -105,8 +105,8 @@ def main():
     print('Hello from main')
 
     # testParseInsFile()
-    # testEmulator()
-    testEmuData()
+    testEmulator()
+    # testEmuData()
     # testConvertSignedInt2Bin()
     # testParseInsStr()
 
