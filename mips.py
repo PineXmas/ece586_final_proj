@@ -317,7 +317,7 @@ class Instruction:
         """
 
         return (self.opcode in self.list_logic_types) or (
-                    self.opcode in self.list_arithmetic_types) or self.opcode == Opcode.LDW
+                self.opcode in self.list_arithmetic_types) or self.opcode == Opcode.LDW
 
     def getType(self) -> str:
         """
@@ -507,7 +507,7 @@ class Instruction:
             elif opcode not in [Opcode.BZ, Opcode.JR, Opcode.HALT]:
                 # parse registers
                 for i in range(1, 3):
-                    reg = Instruction.checkValidReg(tokens[3-i])
+                    reg = Instruction.checkValidReg(tokens[3 - i])
                     if reg < 0:
                         return ''
                     list_vals.append(reg)
@@ -673,7 +673,8 @@ class PipelineStage:
 
     def getStatus(self) -> str:
         """
-        Return a string summarizing current status of the stage
+        Return a string summarizing current status of the stage. Should be called after execute method to get up-to-date
+        status.
 
         :return:
         """
@@ -685,10 +686,10 @@ class PipelineStage:
 
     def isDoingNothing(self):
         """
-        :return: True if NOOP or HALT or stall
+        :return: True if NOOP or HALT or stall or output-is-not-ready
         """
 
-        return self.data.ins.opcode == Opcode.HALT or self.data.ins.opcode == Opcode.NOOP or self.is_stall
+        return self.data.ins.opcode == Opcode.HALT or self.data.ins.opcode == Opcode.NOOP or self.is_stall or not self.data.is_output_ready
 
 
 class StageIF(PipelineStage):
@@ -1376,23 +1377,38 @@ class Emulator:
         # determine if the emulation should be halted
         self.is_halted = self.stage_WB.data.is_halt_done_WB
 
-        # TODO: note the case IF.data.is_halt_done_IF should be undone if branch is near HALT !!!
+        # check for hazards to enable/disable stages for next cycle
+        # TODO: incorporate forwarding later
+        if \
+                ((self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready) \
+                or ((self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready) \
+                :
+            self.stage_IF.setStall(True)
+            self.stage_ID.setStall(True)
+        else:
+            self.stage_IF.setStall(False)
+            self.stage_IF.data.is_output_ready = True
+            self.stage_ID.setStall(False)
 
         # determine next PC: sequential or branch
+        # TODO: note the case IF.data.is_halt_done_IF should be undone if branch is near HALT !!!
+        print(f'curr PC = {self.mem_out.pc}')
+        suffix = 'sequential'
         if self.stage_EX.data.is_branch:
             self.mem_out.pc = self.stage_EX.data.branch_addr
-            print(f'next PC = {self.stage_EX.data.branch_addr} (branch)')
+            suffix = 'branch'
         else:
-            # FIXME: in case HALT is encountered at IF, PC should not be increased!
-            self.mem_out.pc += 1
-            print(f'next PC = {self.mem_out.pc} (sequential)')
+            if self.stage_IF.is_stall:
+                suffix = 'stall'
+            else:
+                # FIXME: in case HALT is encountered at IF, PC should not be increased!
+                self.mem_out.pc += 1
+        print(f'next PC = {self.mem_out.pc} ({suffix})')
 
         # count cycles
         self.count_cycles += 1
 
-        # check for hazards to enable/disable stages for next cycle
-        # TODO: continue here to check hazards, after adding is_output_ready signal to StageData
-
+        # print a new line to separate between cycles
         print()
 
     def reset(self):
