@@ -785,6 +785,7 @@ class StageID(PipelineStage):
         else:
             # special cases for BEQ/BZ/STW
             if self.data.ins.opcode == Opcode.STW:
+                # TODO: avoid using data_to_write here, use alu_op_a instead to handle forwarding easier
                 self.data.data_to_write = emu_data.getRegister(self.data.ins.rt)
             elif self.data.ins.opcode == Opcode.BZ:
                 self.data.alu_op_b = 0
