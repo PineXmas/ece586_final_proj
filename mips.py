@@ -602,9 +602,6 @@ class StageData:
         # flag: determine if we should take the branch
         self.is_branch = False
 
-        # flag: if this stage is stalled so that the data should not be propagated
-        self.is_stall = False
-
         # intermediate computation values
         self.alu_result = 0  # store computed ALU result used by stages MEM and WB
         self.alu_op_a = 0
@@ -616,8 +613,8 @@ class StageData:
         # - ALU val to write to reg (R/I-type)
         self.data_to_write = 0
 
-        # store destination in terms of: mem addr OR reg index
-        self.dst_to_write = 0
+        # register destination
+        self.reg_to_write = 0
 
         # destination: rd, mem or PC
         self.dst_type = WriteDst.NOT_SET
@@ -646,20 +643,19 @@ class PipelineStage:
         # flag to enable/disable this stage (stall)
         self.is_stall = False
 
-        # intermediate results
+        # intermediate output results
         self.data = StageData()
 
-    def checkStallAndSetNOOP(self):
+    def checkStallAndPrepare(self):
         """
-        Check if the stage is stalled and set instruction to NOOP for doing nothing
+        Check if the stage is stalled and prepare necessary stuffs
+
         :return: True if stalled, False otherwise
         """
 
         if self.is_stall:
-            self.data.is_stall = True
             return True
 
-        self.data.is_stall = False
         return False
 
     def setStall(self, is_stall: bool):
@@ -679,14 +675,17 @@ class PipelineStage:
         :return:
         """
 
-        return f'{self.data.ins.toString()}'
+        if not self.is_stall:
+            return f'{self.data.ins.toString()}'
+        else:
+            return 'stall'
 
     def isDoingNothing(self):
         """
-        :return: True if NOOP or HALT
+        :return: True if NOOP or HALT or stall
         """
 
-        return self.data.ins.opcode == Opcode.HALT or self.data.ins.opcode == Opcode.NOOP
+        return self.data.ins.opcode == Opcode.HALT or self.data.ins.opcode == Opcode.NOOP or self.is_stall
 
 
 class StageIF(PipelineStage):
@@ -702,7 +701,7 @@ class StageIF(PipelineStage):
         """
 
         # check stall
-        if self.checkStallAndSetNOOP():
+        if self.checkStallAndPrepare():
             return
 
         # do nothing if HALT is encountered or stalled
@@ -727,11 +726,11 @@ class StageIF(PipelineStage):
         if self.data.ins.isRType() or self.data.ins.opcode == Opcode.BEQ or self.data.ins.opcode == Opcode.STW:
             self.data.input_indices.add(self.data.ins.rt)
         if self.data.ins.isRType():
-            self.data.dst_to_write = self.data.ins.rd
+            self.data.reg_to_write = self.data.ins.rd
         elif self.data.ins.isIType_RegWrite():
-            self.data.dst_to_write = self.data.ins.rt
+            self.data.reg_to_write = self.data.ins.rt
         else:
-            self.data.dst_to_write = -1
+            self.data.reg_to_write = -1
 
     def getStatus(self) -> str:
         status = super().getStatus()
@@ -740,7 +739,7 @@ class StageIF(PipelineStage):
 
         status += f' (' \
                   f'input={self.data.input_indices}' \
-                  f', dst_to_write={self.data.dst_to_write}' \
+                  f', reg_to_write={self.data.reg_to_write}' \
                   f')'
 
         return status
@@ -759,7 +758,7 @@ class StageID(PipelineStage):
         """
 
         # check stall
-        if self.checkStallAndSetNOOP():
+        if self.checkStallAndPrepare():
             return
 
         # take data from previous stage
@@ -883,7 +882,7 @@ class StageEX(PipelineStage):
         """
 
         # check stall
-        if self.checkStallAndSetNOOP():
+        if self.checkStallAndPrepare():
             return
 
         # take data from previous stage
@@ -947,7 +946,7 @@ class StageMEM(PipelineStage):
         """
 
         # check stall
-        if self.checkStallAndSetNOOP():
+        if self.checkStallAndPrepare():
             return
 
         # take data from previous stage
@@ -970,6 +969,8 @@ class StageMEM(PipelineStage):
     def getStatus(self) -> str:
 
         status = super().getStatus()
+        if self.isDoingNothing():
+            return status
 
         if self.data.ins.opcode == Opcode.LDW:
             status += f' (data_to_write = mem[{self.data.mem_addr}] = {self.data.data_to_write})'
@@ -992,7 +993,7 @@ class StageWB(PipelineStage):
         """
 
         # check stall
-        if self.checkStallAndSetNOOP():
+        if self.checkStallAndPrepare():
             return
 
         # take data from previous stage
@@ -1007,14 +1008,16 @@ class StageWB(PipelineStage):
 
         # write back to registers
         if self.data.dst_type == WriteDst.REG:
-            emu_data.setRegister(self.data.dst_to_write, self.data.data_to_write)
+            emu_data.setRegister(self.data.reg_to_write, self.data.data_to_write)
 
     def getStatus(self) -> str:
 
         status = super().getStatus()
+        if self.isDoingNothing():
+            return status
 
         if self.data.dst_type == WriteDst.REG:
-            status += f' (R{self.data.dst_to_write} = {self.data.data_to_write})'
+            status += f' (R{self.data.reg_to_write} = {self.data.data_to_write})'
 
         return status
 
@@ -1306,14 +1309,8 @@ class Emulator:
 
         """
         1/ BEGIN OF CYCLE:
-            - check for hazards & stall (by disabling appropriate stages)
-            - check to forward (if stall)
+        
         """
-
-        # # check for hazards to enable/disable stages
-        # for i in range(N_STAGES-1, -1, -1):
-        #     if self.stages[i].data.dst_to_write in
-
 
         """
         2/ DURING CYCLE:
@@ -1344,6 +1341,8 @@ class Emulator:
         3/ END OF CYCLE:
             - recover/flush incorrect fetched instruction
             - PC
+            - check for hazards & stall (by disabling appropriate stages)
+            - check to forward (if stall)
         """
 
         # determine if the emulation should be halted
@@ -1362,6 +1361,9 @@ class Emulator:
 
         # count cycles
         self.count_cycles += 1
+
+        # check for hazards to enable/disable stages for next cycle
+        # TODO: continue here to check hazards, after adding is_output_ready signal to StageData
 
         print()
 
