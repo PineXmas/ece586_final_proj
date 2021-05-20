@@ -1423,8 +1423,8 @@ class Emulator:
             if self.stage_IF.is_stall:
                 suffix = '(stall)'
             else:
-                # FIXME: in case HALT is encountered at IF, PC should not be increased!
-                self.mem_out.pc += 1
+                if not self.stage_IF.data.is_halt_done_IF:
+                    self.mem_out.pc += 1
         print(f'next PC = {self.mem_out.pc} {suffix}')
 
         # count cycles

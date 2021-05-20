@@ -1,0 +1,3 @@
+Questions to ask:
+1/ Should wait until HALT reach the WB stage to end the emulator?
+2/ ...
