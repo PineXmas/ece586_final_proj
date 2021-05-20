@@ -232,7 +232,7 @@ class Instruction:
     list_R_types = [Opcode.AND, Opcode.OR, Opcode.XOR, Opcode.ADD, Opcode.SUB, Opcode.MUL]
     list_arithmetic_types = [Opcode.ADD, Opcode.ADDI, Opcode.SUB, Opcode.SUBI, Opcode.MUL, Opcode.MULI]
     list_logic_types = [Opcode.AND, Opcode.ANDI, Opcode.OR, Opcode.ORI, Opcode.XOR, Opcode.XORI]
-    list_control_types = [Opcode.BZ, Opcode.BEQ, Opcode.JR]
+    list_control_types = [Opcode.BZ, Opcode.BEQ, Opcode.JR, Opcode.HALT]
     list_mem_types = [Opcode.LDW, Opcode.STW]
 
     # register symbol
@@ -318,6 +318,15 @@ class Instruction:
 
         return (self.opcode in self.list_logic_types) or (
                 self.opcode in self.list_arithmetic_types) or self.opcode == Opcode.LDW
+
+    def isNoop(self):
+        """
+        Return TRUE if this is a no-operation instruction
+
+        :return:
+        """
+
+        return self.opcode == Opcode.NOOP or self.opcode == Opcode.HALT
 
     def getType(self) -> str:
         """
@@ -815,6 +824,7 @@ class StageID(PipelineStage):
             if self.data.ins.opcode == Opcode.STW:
                 # TODO: remember to check STW and forward to data_to_write
                 self.data.data_to_write = emu_data.getRegister(self.data.ins.rt)
+                self.data.alu_op_b = self.data.ins.imm
             elif self.data.ins.opcode == Opcode.BZ:
                 self.data.alu_op_b = 0
             elif self.data.ins.opcode == Opcode.BEQ:
@@ -930,8 +940,8 @@ class StageEX(PipelineStage):
             if self.data.ins.opcode == Opcode.JR:
                 self.data.is_branch = True
                 # TODO: double check the branch-addr: use as is OR divide by 4 ???.
-                #  Use as is for now. The example "sample_memory_image" also hints "as is" usage (see BEQ/BZ)
-                self.data.branch_addr = self.data.alu_op_a
+                #  Use /4 for now. Since "as is" does not make sense for the example "sample_memory_image"
+                self.data.branch_addr = int(self.data.alu_op_a / 4)
             else:
                 self.data.alu_result = self.data.alu_op_a - self.data.alu_op_b
                 self.data.is_branch = (self.data.alu_result == 0)
@@ -1303,13 +1313,24 @@ class Emulator:
         # count the number of cycles spent in the emulation
         self.count_cycles = 0
 
+        # count executed instructions
+        self.count_ins = 0
+
+        # count stalls
+        self.count_stalls = 0
+
+        # count instructions: arithmetic, logical, mem-access, control
+        self.count_ins_ari = 0
+        self.count_ins_log = 0
+        self.count_ins_mem = 0
+        self.count_ins_con = 0
+
         # pipeline intermediate data
         self.stage_IF = StageIF()
         self.stage_ID = StageID()
         self.stage_EX = StageEX()
         self.stage_MEM = StageMEM()
         self.stage_WB = StageWB()
-        self.stages = [self.stage_IF, self.stage_ID, self.stage_EX, self.stage_MEM, self.stage_WB]
 
     def loadFromFile(self, file_path: str):
         """
@@ -1393,11 +1414,15 @@ class Emulator:
         # check for hazards to enable/disable stages for next cycle
         # TODO: incorporate forwarding later
         if \
-                ((self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready) \
-                or ((self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready) \
+                (not self.stage_IF.data.ins.isNoop()) \
+                and ( \
+                ((self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready and not self.stage_ID.data.ins.isNoop()) \
+                or ((self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready and not self.stage_EX.data.ins.isNoop()) \
+                ) \
                 :
             self.stage_IF.setStall(True)
             self.stage_ID.setStall(True)
+            self.count_stalls += 1
         else:
             self.stage_IF.setStall(False)
             self.stage_IF.data.is_output_ready = True
@@ -1430,6 +1455,18 @@ class Emulator:
         # count cycles
         self.count_cycles += 1
 
+        # count executed instructions & ins frequency: must be output-ready & including HALT
+        if (self.stage_WB.data.ins.opcode == Opcode.HALT or not self.stage_WB.data.ins.isNoop()) and self.stage_WB.data.is_output_ready:
+            self.count_ins += 1
+            if self.stage_WB.data.ins.isArithmetic():
+                self.count_ins_ari += 1
+            if self.stage_WB.data.ins.isLogical():
+                self.count_ins_log += 1
+            if self.stage_WB.data.ins.isMemoryAccess():
+                self.count_ins_mem += 1
+            if self.stage_WB.data.ins.isControlTransfer():
+                self.count_ins_con += 1
+
         # print a new line to separate between cycles
         print()
 
@@ -1442,6 +1479,8 @@ class Emulator:
 
         self.is_halted = False
         self.count_cycles = 0
+        self.count_ins = 0
+        self.count_stalls = 0
         self.stage_IF = StageIF()
         self.stage_ID = StageID()
         self.stage_EX = StageEX()
@@ -1459,6 +1498,16 @@ class Emulator:
         # cycles
         report += f'Total cycles = {self.count_cycles}\n'
 
+        # stalls
+        report += f'Total stalls = {self.count_stalls}\n'
+
+        # count executed instructions & frequency
+        report += f'Total executed instructions = {self.count_ins}\n'
+        report += f'  Arithmetic      : {self.count_ins_ari}\n'
+        report += f'  Logical         : {self.count_ins_log}\n'
+        report += f'  Memory access   : {self.count_ins_mem}\n'
+        report += f'  Control transfer: {self.count_ins_con}\n'
+
         # register
         report += '\nRegisters:\n'
         for i in range(MAX_REGS):
@@ -1470,10 +1519,10 @@ class Emulator:
         # memory
         report += '\nMemory:\n'
         for i in range(self.mem_in.getMemLen()):
-            val_in = self.mem_in.getMemStr(i)
-            val_out = self.mem_out.getMemStr(i)
+            val_in = self.mem_in.getMemInt(i)
+            val_out = self.mem_out.getMemInt(i)
             if val_in != val_out:
-                report += f'[{i}] = {val_out}\n'
+                report += f'[{i*4}] = {val_out}\n'
 
         return report
 

@@ -55,10 +55,10 @@ def testConvertSignedInt2Bin():
 def testEmulator():
     # load memory image
     emu = mips.Emulator()
-    # file_path = "data/sample_memory_image.txt"
+    file_path = "data/sample_memory_image.txt"
     # file_path = "data/test_03.txt"
     # file_path = "data/extra_ex_07.txt"
-    file_path = "data/test_branch_02.txt"
+    # file_path = "data/test_branch_02.txt"
     emu.loadFromFile(file_path)
     print('Number of mem lines =', len(emu.mem_in.mem))
 
@@ -105,7 +105,7 @@ def testParseInsFile():
 def main():
     print('Hello from main')
 
-    testParseInsFile()
+    # testParseInsFile()
     testEmulator()
     # testEmuData()
     # testConvertSignedInt2Bin()
