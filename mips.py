@@ -679,10 +679,16 @@ class PipelineStage:
         :return:
         """
 
-        if (not self.is_stall) and self.data.is_output_ready:
-            return f'{self.data.ins.toString()}'
-        else:
-            return 'stall'
+        status = f'{self.data.ins.toString()}'
+        if (self.data.ins.opcode != Opcode.NOOP and self.data.ins.opcode != Opcode.HALT) and (self.is_stall or not self.data.is_output_ready):
+            status += ' [stall]'
+
+        # if (not self.is_stall) and self.data.is_output_ready:
+        #     return f'{self.data.ins.toString()}'
+        # else:
+        #     return 'stall'
+
+        return status
 
     def isDoingNothing(self):
         """
@@ -690,6 +696,15 @@ class PipelineStage:
         """
 
         return self.data.ins.opcode == Opcode.HALT or self.data.ins.opcode == Opcode.NOOP or self.is_stall or not self.data.is_output_ready
+
+    def flush(self):
+        """
+        Flush the current output out from the stage, replaced by a NOOP
+
+        :return:
+        """
+
+        self.data.ins.opcode = Opcode.NOOP
 
 
 class StageIF(PipelineStage):
@@ -802,10 +817,8 @@ class StageID(PipelineStage):
                 self.data.data_to_write = emu_data.getRegister(self.data.ins.rt)
             elif self.data.ins.opcode == Opcode.BZ:
                 self.data.alu_op_b = 0
-                self.data.branch_addr = self.data.ins.imm
             elif self.data.ins.opcode == Opcode.BEQ:
                 self.data.alu_op_b = emu_data.getRegister(self.data.ins.rt)
-                self.data.branch_addr = self.data.ins.imm
             else:
                 self.data.alu_op_b = self.data.ins.imm
 
@@ -888,7 +901,7 @@ class StageEX(PipelineStage):
 
         raise Exception(f'StageEX: unsupported ALU operation for opcode {opcode.name}')
 
-    def execute(self, prev_stage: 'PipelineStage'):
+    def execute(self, prev_stage: 'PipelineStage', emu_data: 'EmuData'):
         """
         Execute this stage to emulate one step/cycle in the pipeline
 
@@ -922,7 +935,7 @@ class StageEX(PipelineStage):
             else:
                 self.data.alu_result = self.data.alu_op_a - self.data.alu_op_b
                 self.data.is_branch = (self.data.alu_result == 0)
-                self.data.branch_addr = self.data.ins.imm
+                self.data.branch_addr = self.data.ins.imm + emu_data.pc - 2
             return
 
         # perform ALU operation based on the opcode
@@ -1355,7 +1368,7 @@ class Emulator:
         print('MEM --> ', self.stage_MEM.getStatus(), sep='')
 
         # Stage 3: EX
-        self.stage_EX.execute(self.stage_ID)
+        self.stage_EX.execute(self.stage_ID, self.mem_out)
         print('EX  --> ', self.stage_EX.getStatus(), sep='')
 
         # Stage 2: ID
@@ -1391,19 +1404,28 @@ class Emulator:
             self.stage_ID.setStall(False)
 
         # determine next PC: sequential or branch
-        # TODO: note the case IF.data.is_halt_done_IF should be undone if branch is near HALT !!!
         print(f'curr PC = {self.mem_out.pc}')
-        suffix = 'sequential'
+        suffix = ''
         if self.stage_EX.data.is_branch:
             self.mem_out.pc = self.stage_EX.data.branch_addr
-            suffix = 'branch'
+            suffix = '(branch, flush IF & ID)'
+
+            # flush 2 incorrect instructions in IF and ID stages
+            self.stage_IF.flush()
+            self.stage_IF.setStall(False)
+            self.stage_ID.flush()
+            self.stage_ID.setStall(False)
+
+            # undone IF.is_halt_done_IF
+            if self.stage_IF.data.is_halt_done_IF:
+                self.stage_IF.data.is_halt_done_IF = False
         else:
             if self.stage_IF.is_stall:
-                suffix = 'stall'
+                suffix = '(stall)'
             else:
                 # FIXME: in case HALT is encountered at IF, PC should not be increased!
                 self.mem_out.pc += 1
-        print(f'next PC = {self.mem_out.pc} ({suffix})')
+        print(f'next PC = {self.mem_out.pc} {suffix}')
 
         # count cycles
         self.count_cycles += 1
@@ -1461,6 +1483,11 @@ class Emulator:
 
         :return:
         """
+
+        # skip if empty memory
+        if self.mem_in.getMemLen() == 0:
+            print('Memory is empty. Skipped.')
+            return
 
         # do nothing if end of code is reached
         if self.is_halted:
