@@ -45,8 +45,33 @@ N_STAGES = 5
 
 # -------------------- GLOBAL VARIABLES --------------------
 
-# debug mode ON or OFF
-is_debug = False
+# debug level to determine whether a message should be displayed using the debugPrint
+__debug_level = False
+
+
+class MessageType(Enum):
+    """
+    Type assigned to each debug message
+    """
+
+    INFO = auto(),
+    DEBUG = auto()
+
+
+class DebugLevel(Enum):
+    """
+    All levels supported in the debugPrint function
+    """
+
+    # will not show anything
+    SILENCE = auto(),
+
+    # will shown INFO msg only
+    INFO = auto(),
+
+    # will shown INFO/DEBUG msg
+    DEBUG = auto()
+
 
 # -------------------- FUNCS --------------------
 
@@ -169,38 +194,42 @@ def getNameList(list_enum: []) -> []:
     return list_names
 
 
-def debugPrint(self, *args, sep=' ', end='\n', file=None):
+def debugPrint(*args, sep=' ', end='\n', file=None, msg_type=MessageType.DEBUG):
     """
-    Print if the debug mode is ON. All the arguments have the same meaning as in the print() function
+    Print if the debug level allows for the message type. All the arguments have the same meaning as in the print() function
     """
 
-    if is_debug:
-        print(self, *args, sep=sep, end=end, file=file)
+    if __debug_level == DebugLevel.SILENCE:
+        return
+
+    if __debug_level == DebugLevel.DEBUG \
+            or (__debug_level == DebugLevel.INFO and msg_type == MessageType.INFO):
+        print(*args, sep=sep, end=end, file=file)
 
 
-def setDebugMode(is_debug_on: bool):
+def setDebugLevel(debug_level: DebugLevel):
     """
-    Set global debug mode
+    Set debug level
 
-    :param is_debug_on:
+    :param debug_level:
     :return:
     """
 
-    global is_debug
-    is_debug = is_debug_on
+    global __debug_level
+    __debug_level = debug_level
 
 
-def getDebugMode():
+def getDebugLevel():
     """
-    Get debug mode
+    Get debug level
 
     :return:
     """
 
-    return is_debug
+    return __debug_level
+
 
 # -------------------- CLASS --------------------
-
 
 class Opcode(Enum):
     """
@@ -447,7 +476,7 @@ class Instruction:
             # record the hex string
             ins.hex_str = hex_str
         except Exception as e:
-            # print('Error while parsing instruction: [', hex_str, '], error=', e, sep='')
+            # debugPrint('Error while parsing instruction: [', hex_str, '], error=', e, sep='')
             ins.opcode = Opcode.UNKNOWN
 
         return ins
@@ -529,7 +558,7 @@ class Instruction:
             return ''
         opcode = Opcode[opcode]
         bin_str += convertSignedInt2Bin(int(opcode), LEN_OP)
-        print(f'opcode={opcode}, bin_str={bin_str}')
+        debugPrint(f'opcode={opcode}, bin_str={bin_str}')
 
         if len(tokens) == 4:
 
@@ -605,7 +634,7 @@ class Instruction:
 
         # check & open files
         if not os.path.isfile(file_in):
-            print('File not exist:', file_in)
+            debugPrint('File not exist:', file_in)
             return
         fin = open(file_in, "r")
         fout = open(file_out, "w")
@@ -723,7 +752,8 @@ class PipelineStage:
         """
 
         status = f'{self.data.ins.toString()}'
-        if (self.data.ins.opcode != Opcode.NOOP and self.data.ins.opcode != Opcode.HALT) and (self.is_stall or not self.data.is_output_ready):
+        if (self.data.ins.opcode != Opcode.NOOP and self.data.ins.opcode != Opcode.HALT) and (
+                self.is_stall or not self.data.is_output_ready):
             status += ' [stall]'
 
         # if (not self.is_stall) and self.data.is_output_ready:
@@ -1178,7 +1208,7 @@ class EmuData:
 
         # check & open file
         if not os.path.isfile(file_path):
-            print('File not exist:', file_path)
+            debugPrint('File not exist:', file_path)
             return
         f = open(file_path, "r")
 
@@ -1411,23 +1441,23 @@ class Emulator:
 
         # Stage 5: WB
         self.stage_WB.execute(self.stage_MEM, self.mem_out)
-        print('WB  --> ', self.stage_WB.getStatus(), sep='')
+        debugPrint('WB  --> ', self.stage_WB.getStatus(), sep='')
 
         # Stage 4: MEM
         self.stage_MEM.execute(self.stage_EX, self.mem_out)
-        print('MEM --> ', self.stage_MEM.getStatus(), sep='')
+        debugPrint('MEM --> ', self.stage_MEM.getStatus(), sep='')
 
         # Stage 3: EX
         self.stage_EX.execute(self.stage_ID, self.mem_out)
-        print('EX  --> ', self.stage_EX.getStatus(), sep='')
+        debugPrint('EX  --> ', self.stage_EX.getStatus(), sep='')
 
         # Stage 2: ID
         self.stage_ID.execute(self.stage_IF, self.mem_out)
-        print('ID  --> ', self.stage_ID.getStatus(), sep='')
+        debugPrint('ID  --> ', self.stage_ID.getStatus(), sep='')
 
         # Stage 1: IF
         self.stage_IF.execute(self.mem_out)
-        print('IF  --> ', self.stage_IF.getStatus(), sep='')
+        debugPrint('IF  --> ', self.stage_IF.getStatus(), sep='')
 
         """
         2/ END OF CYCLE:
@@ -1444,10 +1474,12 @@ class Emulator:
         # TODO: incorporate forwarding later
         if \
                 (not self.stage_IF.data.ins.isNoop()) \
-                and ( \
-                ((self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready and not self.stage_ID.data.ins.isNoop()) \
-                or ((self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready and not self.stage_EX.data.ins.isNoop()) \
-                ) \
+                        and ( \
+                                ((
+                                         self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready and not self.stage_ID.data.ins.isNoop())
+                                or ((
+                                            self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready and not self.stage_EX.data.ins.isNoop()) \
+                        ) \
                 :
             self.stage_IF.setStall(True)
             self.stage_ID.setStall(True)
@@ -1458,7 +1490,7 @@ class Emulator:
             self.stage_ID.setStall(False)
 
         # determine next PC: sequential or branch
-        print(f'curr PC = {self.mem_out.pc}')
+        debugPrint(f'curr PC = {self.mem_out.pc}')
         suffix = ''
         if self.stage_EX.data.is_branch:
             self.mem_out.pc = self.stage_EX.data.branch_addr
@@ -1479,13 +1511,14 @@ class Emulator:
             else:
                 if not self.stage_IF.data.is_halt_done_IF:
                     self.mem_out.pc += 1
-        print(f'next PC = {self.mem_out.pc} {suffix}')
+        debugPrint(f'next PC = {self.mem_out.pc} {suffix}')
 
         # count cycles
         self.count_cycles += 1
 
         # count executed instructions & ins frequency: must be output-ready & including HALT
-        if (self.stage_WB.data.ins.opcode == Opcode.HALT or not self.stage_WB.data.ins.isNoop()) and self.stage_WB.data.is_output_ready:
+        if (
+                self.stage_WB.data.ins.opcode == Opcode.HALT or not self.stage_WB.data.ins.isNoop()) and self.stage_WB.data.is_output_ready:
             self.count_ins += 1
             if self.stage_WB.data.ins.isArithmetic():
                 self.count_ins_ari += 1
@@ -1497,7 +1530,7 @@ class Emulator:
                 self.count_ins_con += 1
 
         # print a new line to separate between cycles
-        print()
+        debugPrint()
 
     def reset(self):
         """
@@ -1551,7 +1584,7 @@ class Emulator:
             val_in = self.mem_in.getMemInt(i)
             val_out = self.mem_out.getMemInt(i)
             if val_in != val_out:
-                report += f'[{i*4}] = {val_out}\n'
+                report += f'  [{i * 4}] = {val_out}\n'
 
         return report
 
@@ -1564,7 +1597,7 @@ class Emulator:
 
         # skip if empty memory
         if self.mem_in.getMemLen() == 0:
-            print('Memory is empty. Skipped.')
+            debugPrint('Memory is empty. Skipped.')
             return
 
         # do nothing if end of code is reached

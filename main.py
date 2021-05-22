@@ -66,6 +66,7 @@ def testEmulator():
     print(emu.getInsStr())
 
     # execute
+    # mips.setDebugLevel(mips.DebugLevel.DEBUG)
     emu.execute()
     print(emu.getReportString())
 
@@ -103,7 +104,6 @@ def testParseInsFile():
 
 
 def main():
-    print('Hello from main')
 
     # testParseInsFile()
     testEmulator()
