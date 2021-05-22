@@ -10,7 +10,7 @@ import os.path
 import copy
 import re
 
-# -------------------- DEFINES --------------------
+# -------------------- DEFINES/CONSTANTS --------------------
 
 # offset for each portions in an instruction
 LEN_OP = 6
@@ -43,6 +43,10 @@ MAX_IMM = int(2 ** LEN_IMM / 2) - 1
 # number of stages in the pipeline
 N_STAGES = 5
 
+# -------------------- GLOBAL VARIABLES --------------------
+
+# debug mode ON or OFF
+is_debug = False
 
 # -------------------- FUNCS --------------------
 
@@ -164,6 +168,36 @@ def getNameList(list_enum: []) -> []:
         list_names.append(enum.name)
     return list_names
 
+
+def debugPrint(self, *args, sep=' ', end='\n', file=None):
+    """
+    Print if the debug mode is ON. All the arguments have the same meaning as in the print() function
+    """
+
+    if is_debug:
+        print(self, *args, sep=sep, end=end, file=file)
+
+
+def setDebugMode(is_debug_on: bool):
+    """
+    Set global debug mode
+
+    :param is_debug_on:
+    :return:
+    """
+
+    global is_debug
+    is_debug = is_debug_on
+
+
+def getDebugMode():
+    """
+    Get debug mode
+
+    :return:
+    """
+
+    return is_debug
 
 # -------------------- CLASS --------------------
 
@@ -1372,11 +1406,6 @@ class Emulator:
 
         """
         1/ BEGIN OF CYCLE:
-        
-        """
-
-        """
-        2/ DURING CYCLE:
             - emulate the pipeline with 5 stages
         """
 
@@ -1401,7 +1430,7 @@ class Emulator:
         print('IF  --> ', self.stage_IF.getStatus(), sep='')
 
         """
-        3/ END OF CYCLE:
+        2/ END OF CYCLE:
             - recover/flush incorrect fetched instruction
             - PC
             - check for hazards & stall (by disabling appropriate stages)
