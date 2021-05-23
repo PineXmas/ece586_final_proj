@@ -1432,22 +1432,33 @@ class Emulator:
         :return:
         """
 
+        debug_str = ''
+
         # determine value to forward
+        debug_str += '  forward_val='
         if src_data.ins.opcode != Opcode.LDW:
             forward_val = src_data.alu_result
+            debug_str += 'alu_result'
         else:
             forward_val = src_data.data_to_write
+            debug_str += 'data_to_write'
+        debug_str += f'={forward_val}'
 
         # forward to alu-op-a
         if len(dst_data.input_indices) > 0 and dst_data.input_indices[0] == src_data.reg_to_write:
             dst_data.alu_op_a = forward_val
+            debug_str += ' --> alu_op_a'
 
         # forward to alu-op-b/data-to-write
         if len(dst_data.input_indices) > 1 and dst_data.input_indices[1] == src_data.reg_to_write:
             if dst_data.ins.isRType() or dst_data.ins.opcode == Opcode.BEQ:
                 dst_data.alu_op_b = forward_val
+                debug_str += ' --> alu_op_b'
             elif dst_data.ins.opcode == Opcode.STW:
                 dst_data.data_to_write = forward_val
+                debug_str += ' --> data_to_write'
+
+        debugPrint(debug_str)
 
     def execute_step(self):
         """
@@ -1496,10 +1507,15 @@ class Emulator:
         # determine if the emulation should be halted
         self.is_halted = self.stage_WB.data.is_halt_done_WB
 
-        # determine next PC: sequential or branch
+        # handle PC (sequential or branch) and hazards
         debugPrint(f'curr PC = {self.mem_out.pc}')
         suffix = ''
         if self.stage_EX.data.is_branch:
+            """
+            [Branch]
+                Ignore hazards if we branch, since IF and ID are flushed
+            """
+
             self.mem_out.pc = self.stage_EX.data.branch_addr
             suffix = '(branch, flush IF & ID)'
 
@@ -1513,12 +1529,46 @@ class Emulator:
             if self.stage_IF.data.is_halt_done_IF:
                 self.stage_IF.data.is_halt_done_IF = False
         else:
-            if self.stage_IF.is_stall:
+            """
+            [Sequential]
+                Handle hazards by forwarding/stalling
+            """
+
+            # detect & handle hazards
+            self.handleHazards()
+
+            # do not increase PC if IF is stalled
+            if self.stage_IF.is_stall or self.stage_IF.data.is_halt_done_IF:
                 suffix = '(stall)'
             else:
-                if not self.stage_IF.data.is_halt_done_IF:
-                    self.mem_out.pc += 1
+                self.mem_out.pc += 1
         debugPrint(f'next PC = {self.mem_out.pc} {suffix}')
+
+        # count cycles
+        self.count_cycles += 1
+
+        # count executed instructions & ins frequency: must be output-ready & including HALT
+        if (
+                (self.stage_WB.data.ins.opcode == Opcode.HALT or not self.stage_WB.data.ins.isNoop())
+                and self.stage_WB.data.is_output_ready
+        ):
+            self.count_ins += 1
+            if self.stage_WB.data.ins.isArithmetic():
+                self.count_ins_ari += 1
+            if self.stage_WB.data.ins.isLogical():
+                self.count_ins_log += 1
+            if self.stage_WB.data.ins.isMemoryAccess():
+                self.count_ins_mem += 1
+            if self.stage_WB.data.ins.isControlTransfer():
+                self.count_ins_con += 1
+
+        # print a new line to separate between cycles
+        debugPrint()
+
+    def handleHazards(self):
+        """
+        Detect & handle hazards by forwarding or stall, depending on current settings
+        """
 
         # check for hazards to enable/disable stages for next cycle
         if self.is_forwarding:
@@ -1535,6 +1585,7 @@ class Emulator:
             self.stage_IF.setStall(False)
             self.stage_IF.data.is_output_ready = True
             self.stage_ID.setStall(False)
+            self.stage_ID.data.is_output_ready = True
             self.stage_EX.setStall(False)
 
             if not self.stage_ID.data.ins.isNoop():
@@ -1549,28 +1600,28 @@ class Emulator:
                     self.stage_ID.setStall(True)
                     self.stage_EX.setStall(True)
                     self.count_stalls += 1
-                else:
+                # else:
 
-                    # forward: case 1, 2, 3
-                    if (
-                            self.stage_EX.data.is_output_ready
-                            and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
-                            and (self.stage_EX.data.ins.isLogical() or self.stage_EX.data.ins.isArithmetic())
-                    ):
-                        debugPrint(f'  forward EX to to next EX')
-                        self.forward(self.stage_EX.data, self.stage_ID.data)
-                    if (
-                            self.stage_MEM.data.is_output_ready
-                            and (self.stage_MEM.data.reg_to_write in self.stage_ID.data.input_indices)
-                            and
-                            (
-                                    self.stage_MEM.data.ins.isLogical()
-                                    or self.stage_MEM.data.ins.isArithmetic()
-                                    or self.stage_MEM.data.ins.opcode == Opcode.LDW
-                            )
-                    ):
-                        debugPrint(f'  forward MEM to to next EX')
-                        self.forward(self.stage_MEM.data, self.stage_ID.data)
+                # forward: case 1, 2, 3
+                if (
+                        self.stage_EX.data.is_output_ready
+                        and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
+                        and (self.stage_EX.data.ins.isLogical() or self.stage_EX.data.ins.isArithmetic())
+                ):
+                    debugPrint(f'  forward EX to to next EX')
+                    self.forward(self.stage_EX.data, self.stage_ID.data)
+                if (
+                        self.stage_MEM.data.is_output_ready
+                        and (self.stage_MEM.data.reg_to_write in self.stage_ID.data.input_indices)
+                        and
+                        (
+                                self.stage_MEM.data.ins.isLogical()
+                                or self.stage_MEM.data.ins.isArithmetic()
+                                or self.stage_MEM.data.ins.opcode == Opcode.LDW
+                        )
+                ):
+                    debugPrint(f'  forward MEM to to next EX')
+                    self.forward(self.stage_MEM.data, self.stage_ID.data)
 
         else:
 
@@ -1601,25 +1652,6 @@ class Emulator:
                 self.stage_IF.setStall(False)
                 self.stage_IF.data.is_output_ready = True
                 self.stage_ID.setStall(False)
-
-        # count cycles
-        self.count_cycles += 1
-
-        # count executed instructions & ins frequency: must be output-ready & including HALT
-        if (
-                self.stage_WB.data.ins.opcode == Opcode.HALT or not self.stage_WB.data.ins.isNoop()) and self.stage_WB.data.is_output_ready:
-            self.count_ins += 1
-            if self.stage_WB.data.ins.isArithmetic():
-                self.count_ins_ari += 1
-            if self.stage_WB.data.ins.isLogical():
-                self.count_ins_log += 1
-            if self.stage_WB.data.ins.isMemoryAccess():
-                self.count_ins_mem += 1
-            if self.stage_WB.data.ins.isControlTransfer():
-                self.count_ins_con += 1
-
-        # print a new line to separate between cycles
-        debugPrint()
 
     def reset(self):
         """
@@ -1700,3 +1732,4 @@ class Emulator:
         # run emulation until 'HALT'
         while not self.is_halted:
             self.execute_step()
+
