@@ -1439,11 +1439,11 @@ class Emulator:
             forward_val = src_data.data_to_write
 
         # forward to alu-op-a
-        if dst_data.input_indices[0] == src_data.reg_to_write:
+        if len(dst_data.input_indices) > 0 and dst_data.input_indices[0] == src_data.reg_to_write:
             dst_data.alu_op_a = forward_val
 
         # forward to alu-op-b/data-to-write
-        if dst_data.input_indices[1] == src_data.reg_to_write:
+        if len(dst_data.input_indices) > 1 and dst_data.input_indices[1] == src_data.reg_to_write:
             if dst_data.ins.isRType() or dst_data.ins.opcode == Opcode.BEQ:
                 dst_data.alu_op_b = forward_val
             elif dst_data.ins.opcode == Opcode.STW:
@@ -1496,85 +1496,6 @@ class Emulator:
         # determine if the emulation should be halted
         self.is_halted = self.stage_WB.data.is_halt_done_WB
 
-        # check for hazards to enable/disable stages for next cycle
-        if self.is_forwarding:
-            """
-            [Cases if forwarding]
-            
-                    Producer        Consumer        Notes
-            1/      LDW             any             stall 1 cycle, forward from MEM, forward  data_to_write instead of alu_result
-            2/      Logic/Arith     any             no stall, forward from EX/MEM
-            3/      any             STW             forward to: data_to_write, alu_op_a
-            """
-
-            # enable IF/ID/EX in case they are stalled
-            self.stage_IF.setStall(False)
-            self.stage_IF.data.is_output_ready = True
-            self.stage_ID.setStall(False)
-            self.stage_EX.setStall(False)
-
-            if not self.stage_ID.data.ins.isNoop():
-
-                # forward: case 1, 2, 3
-                if (
-                    self.stage_EX.data.is_output_ready
-                    and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
-                    and (self.stage_EX.data.ins.isLogical() or self.stage_EX.data.ins.isArithmetic())
-                ):
-                    self.forward(self.stage_EX.data, self.stage_ID.data)
-                elif (
-                    self.stage_MEM.data.is_output_ready
-                    and (self.stage_MEM.data.reg_to_write in self.stage_ID.data.input_indices)
-                    and
-                    (
-                        self.stage_MEM.data.ins.isLogical()
-                        or self.stage_MEM.data.ins.isArithmetic()
-                        or self.stage_MEM.data.ins.opcode == Opcode.LDW
-                    )
-                ):
-                    self.forward(self.stage_MEM.data, self.stage_ID.data)
-
-                # stall: case 1
-                elif(
-                    self.stage_EX.data.is_output_ready
-                    and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
-                    and self.stage_EX.data.ins.opcode == Opcode.LDW
-                ):
-                    self.stage_IF.setStall(True)
-                    self.stage_ID.setStall(True)
-                    self.stage_EX.setStall(True)
-                    self.count_stalls += 1
-
-        else:
-
-            """
-            [Cases if NOT forwarding]
-            """
-
-            if (
-                (not self.stage_IF.data.ins.isNoop())
-                and (
-                    (
-                        (self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices)
-                        and self.stage_ID.data.is_output_ready
-                        and not self.stage_ID.data.ins.isNoop()
-                    )
-                    or
-                    (
-                        (self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices)
-                        and self.stage_EX.data.is_output_ready
-                        and not self.stage_EX.data.ins.isNoop()
-                    )
-                )
-            ):
-                self.stage_IF.setStall(True)
-                self.stage_ID.setStall(True)
-                self.count_stalls += 1
-            else:
-                self.stage_IF.setStall(False)
-                self.stage_IF.data.is_output_ready = True
-                self.stage_ID.setStall(False)
-
         # determine next PC: sequential or branch
         debugPrint(f'curr PC = {self.mem_out.pc}')
         suffix = ''
@@ -1598,6 +1519,88 @@ class Emulator:
                 if not self.stage_IF.data.is_halt_done_IF:
                     self.mem_out.pc += 1
         debugPrint(f'next PC = {self.mem_out.pc} {suffix}')
+
+        # check for hazards to enable/disable stages for next cycle
+        if self.is_forwarding:
+            """
+            [Cases if forwarding]
+
+                    Producer        Consumer        Notes
+            1/      LDW             any             stall 1 cycle, forward from MEM, forward  data_to_write instead of alu_result
+            2/      Logic/Arith     any             no stall, forward from EX/MEM
+            3/      any             STW             forward to: data_to_write, alu_op_a
+            """
+
+            # enable IF/ID/EX in case they are stalled
+            self.stage_IF.setStall(False)
+            self.stage_IF.data.is_output_ready = True
+            self.stage_ID.setStall(False)
+            self.stage_EX.setStall(False)
+
+            if not self.stage_ID.data.ins.isNoop():
+
+                # stall: case 1
+                if (
+                        self.stage_EX.data.is_output_ready
+                        and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
+                        and self.stage_EX.data.ins.opcode == Opcode.LDW
+                ):
+                    self.stage_IF.setStall(True)
+                    self.stage_ID.setStall(True)
+                    self.stage_EX.setStall(True)
+                    self.count_stalls += 1
+                else:
+
+                    # forward: case 1, 2, 3
+                    if (
+                            self.stage_EX.data.is_output_ready
+                            and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
+                            and (self.stage_EX.data.ins.isLogical() or self.stage_EX.data.ins.isArithmetic())
+                    ):
+                        debugPrint(f'  forward EX to to next EX')
+                        self.forward(self.stage_EX.data, self.stage_ID.data)
+                    if (
+                            self.stage_MEM.data.is_output_ready
+                            and (self.stage_MEM.data.reg_to_write in self.stage_ID.data.input_indices)
+                            and
+                            (
+                                    self.stage_MEM.data.ins.isLogical()
+                                    or self.stage_MEM.data.ins.isArithmetic()
+                                    or self.stage_MEM.data.ins.opcode == Opcode.LDW
+                            )
+                    ):
+                        debugPrint(f'  forward MEM to to next EX')
+                        self.forward(self.stage_MEM.data, self.stage_ID.data)
+
+        else:
+
+            """
+            [Cases if NOT forwarding]
+            """
+
+            if (
+                    (not self.stage_IF.data.ins.isNoop())
+                    and (
+                    (
+                            (self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices)
+                            and self.stage_ID.data.is_output_ready
+                            and not self.stage_ID.data.ins.isNoop()
+                    )
+                    or
+                    (
+                            (self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices)
+                            and self.stage_EX.data.is_output_ready
+                            and not self.stage_EX.data.ins.isNoop()
+                    )
+            )
+            ):
+                self.stage_IF.setStall(True)
+                self.stage_ID.setStall(True)
+                self.count_stalls += 1
+            else:
+                self.stage_IF.setStall(False)
+                self.stage_IF.data.is_output_ready = True
+                self.stage_ID.setStall(False)
 
         # count cycles
         self.count_cycles += 1

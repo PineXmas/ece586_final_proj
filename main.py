@@ -67,6 +67,7 @@ def testEmulator():
 
     # execute
     mips.setDebugLevel(mips.DebugLevel.DEBUG)
+    emu.setForwardingEnabled(True)
     emu.execute()
     print(emu.getReportString())
 
