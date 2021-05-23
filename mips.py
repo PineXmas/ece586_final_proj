@@ -1369,7 +1369,7 @@ class Emulator:
         self.mem_out = EmuData()
 
         # flag for data forwarding
-        self.forwarding_enabled = False
+        self.is_forwarding = False
 
         # flag to set if end of instructions (HALT is encountered and processed)
         self.is_halted = False
@@ -1421,7 +1421,7 @@ class Emulator:
         :return:
         """
 
-        self.forwarding_enabled = forwarding_enable
+        self.is_forwarding = forwarding_enable
 
     def execute_step(self):
         """
@@ -1472,15 +1472,37 @@ class Emulator:
 
         # check for hazards to enable/disable stages for next cycle
         # TODO: incorporate forwarding later
-        if \
+
+        if self.is_forwarding:
+            """
+            Cases
+                    Producer        Consumer        Notes
+            1/      LDW             any             stall 1 cycle, forward from MEM
+            2/      Logic/Arith     any             no stall, forward from EX/MEM
+            3/      any             STW             forward to: data_to_write, alu_op_a
+            """
+
+            # case 2
+            if (
+                (not self.stage_ID.data.ins.isNoop())
+                and (
+                    self.stage_EX.data.is_output_ready
+                    and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
+                    and (self.stage_EX.data.ins.isLogical() or self.stage_EX.data.ins.isArithmetic())
+                )
+            ):
+                # forward to not STW
+                if not self.stage_ID.data.ins.opcode == Opcode.STW:
+                    print()
+
+        elif \
                 (not self.stage_IF.data.ins.isNoop()) \
-                        and ( \
-                                ((
-                                         self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready and not self.stage_ID.data.ins.isNoop())
-                                or ((
-                                            self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready and not self.stage_EX.data.ins.isNoop()) \
-                        ) \
-                :
+                and (
+                        ((
+                                 self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready and not self.stage_ID.data.ins.isNoop())
+                        or ((
+                                    self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready and not self.stage_EX.data.ins.isNoop()) \
+                ):
             self.stage_IF.setStall(True)
             self.stage_ID.setStall(True)
             self.count_stalls += 1
