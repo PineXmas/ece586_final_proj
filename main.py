@@ -66,7 +66,7 @@ def testEmulator():
     print(emu.getInsStr())
 
     # execute
-    # mips.setDebugLevel(mips.DebugLevel.DEBUG)
+    mips.setDebugLevel(mips.DebugLevel.DEBUG)
     emu.execute()
     print(emu.getReportString())
 

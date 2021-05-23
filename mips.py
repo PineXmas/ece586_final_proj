@@ -701,7 +701,7 @@ class StageData:
         self.mem_addr = 0
 
         # record indices of input registers to check for hazards
-        self.input_indices = set()
+        self.input_indices = []
 
 
 class PipelineStage:
@@ -818,9 +818,9 @@ class StageIF(PipelineStage):
         # registers in this stage in order to detect hazards easier later
         #
         self.data.input_indices.clear()
-        self.data.input_indices.add(self.data.ins.rs)
+        self.data.input_indices.append(self.data.ins.rs)
         if self.data.ins.isRType() or self.data.ins.opcode == Opcode.BEQ or self.data.ins.opcode == Opcode.STW:
-            self.data.input_indices.add(self.data.ins.rt)
+            self.data.input_indices.append(self.data.ins.rt)
         if self.data.ins.isRType():
             self.data.reg_to_write = self.data.ins.rd
         elif self.data.ins.isIType_RegWrite():
@@ -1423,6 +1423,32 @@ class Emulator:
 
         self.is_forwarding = forwarding_enable
 
+    def forward(self, src_data: StageData, dst_data: StageData):
+        """
+        Forward data from source stage to destination stage, based on the involved instructions
+
+        :param src_data:
+        :param dst_data:
+        :return:
+        """
+
+        # determine value to forward
+        if src_data.ins.opcode != Opcode.LDW:
+            forward_val = src_data.alu_result
+        else:
+            forward_val = src_data.data_to_write
+
+        # forward to alu-op-a
+        if dst_data.input_indices[0] == src_data.reg_to_write:
+            dst_data.alu_op_a = forward_val
+
+        # forward to alu-op-b/data-to-write
+        if dst_data.input_indices[1] == src_data.reg_to_write:
+            if dst_data.ins.isRType() or dst_data.ins.opcode == Opcode.BEQ:
+                dst_data.alu_op_b = forward_val
+            elif dst_data.ins.opcode == Opcode.STW:
+                dst_data.data_to_write = forward_val
+
     def execute_step(self):
         """
         Run the emulator for one step/cycle
@@ -1471,45 +1497,83 @@ class Emulator:
         self.is_halted = self.stage_WB.data.is_halt_done_WB
 
         # check for hazards to enable/disable stages for next cycle
-        # TODO: incorporate forwarding later
-
         if self.is_forwarding:
             """
-            Cases
+            [Cases if forwarding]
+            
                     Producer        Consumer        Notes
-            1/      LDW             any             stall 1 cycle, forward from MEM
+            1/      LDW             any             stall 1 cycle, forward from MEM, forward  data_to_write instead of alu_result
             2/      Logic/Arith     any             no stall, forward from EX/MEM
             3/      any             STW             forward to: data_to_write, alu_op_a
             """
 
-            # case 2
-            if (
-                (not self.stage_ID.data.ins.isNoop())
-                and (
-                    self.stage_EX.data.is_output_ready
-                    and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
-                    and (self.stage_EX.data.ins.isLogical() or self.stage_EX.data.ins.isArithmetic())
-                )
-            ):
-                # forward to not STW
-                if not self.stage_ID.data.ins.opcode == Opcode.STW:
-                    print()
-
-        elif \
-                (not self.stage_IF.data.ins.isNoop()) \
-                and (
-                        ((
-                                 self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_ID.data.is_output_ready and not self.stage_ID.data.ins.isNoop())
-                        or ((
-                                    self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices) and self.stage_EX.data.is_output_ready and not self.stage_EX.data.ins.isNoop()) \
-                ):
-            self.stage_IF.setStall(True)
-            self.stage_ID.setStall(True)
-            self.count_stalls += 1
-        else:
+            # enable IF/ID/EX in case they are stalled
             self.stage_IF.setStall(False)
             self.stage_IF.data.is_output_ready = True
             self.stage_ID.setStall(False)
+            self.stage_EX.setStall(False)
+
+            if not self.stage_ID.data.ins.isNoop():
+
+                # forward: case 1, 2, 3
+                if (
+                    self.stage_EX.data.is_output_ready
+                    and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
+                    and (self.stage_EX.data.ins.isLogical() or self.stage_EX.data.ins.isArithmetic())
+                ):
+                    self.forward(self.stage_EX.data, self.stage_ID.data)
+                elif (
+                    self.stage_MEM.data.is_output_ready
+                    and (self.stage_MEM.data.reg_to_write in self.stage_ID.data.input_indices)
+                    and
+                    (
+                        self.stage_MEM.data.ins.isLogical()
+                        or self.stage_MEM.data.ins.isArithmetic()
+                        or self.stage_MEM.data.ins.opcode == Opcode.LDW
+                    )
+                ):
+                    self.forward(self.stage_MEM.data, self.stage_ID.data)
+
+                # stall: case 1
+                elif(
+                    self.stage_EX.data.is_output_ready
+                    and (self.stage_EX.data.reg_to_write in self.stage_ID.data.input_indices)
+                    and self.stage_EX.data.ins.opcode == Opcode.LDW
+                ):
+                    self.stage_IF.setStall(True)
+                    self.stage_ID.setStall(True)
+                    self.stage_EX.setStall(True)
+                    self.count_stalls += 1
+
+        else:
+
+            """
+            [Cases if NOT forwarding]
+            """
+
+            if (
+                (not self.stage_IF.data.ins.isNoop())
+                and (
+                    (
+                        (self.stage_ID.data.reg_to_write in self.stage_IF.data.input_indices)
+                        and self.stage_ID.data.is_output_ready
+                        and not self.stage_ID.data.ins.isNoop()
+                    )
+                    or
+                    (
+                        (self.stage_EX.data.reg_to_write in self.stage_IF.data.input_indices)
+                        and self.stage_EX.data.is_output_ready
+                        and not self.stage_EX.data.ins.isNoop()
+                    )
+                )
+            ):
+                self.stage_IF.setStall(True)
+                self.stage_ID.setStall(True)
+                self.count_stalls += 1
+            else:
+                self.stage_IF.setStall(False)
+                self.stage_IF.data.is_output_ready = True
+                self.stage_ID.setStall(False)
 
         # determine next PC: sequential or branch
         debugPrint(f'curr PC = {self.mem_out.pc}')
